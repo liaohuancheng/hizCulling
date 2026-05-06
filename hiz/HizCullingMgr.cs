@@ -74,10 +74,10 @@ public class HizCullingMgr {
         }
         if (request.done) {
             info.IsWating = false;
-            info.HizCullResultArray = request.GetData<byte>();
+            info.HizCullResultArray = request.GetData<float>();
             for (int i = 0; i < info.HizCullableCount; i++) {
                 var cullable = info.HizCullableArray[i];
-                if (info.HizCullResultArray[i] == 255) {
+                if (info.HizCullResultArray[i] == 1) {
                     cullable.OnCulled();
                 } 
                 else {
@@ -147,14 +147,19 @@ public class HizCullingMgr {
         for (int i = 0; i < m_HizCullableMap.Count; i++)
         {
             var cullable = m_HizCullableMap[i];
-            var center = cullable.GetWorldBoundsCenter();
+            var bounds = cullable.GetWorldBounds();
             
-            var toBounds = center - camPos;
             
             //视锥剔除
-            if (Vector3.Dot(cameraForward, toBounds) > 0)
+            if (GeometryUtility.TestPlanesAABB(m_FrustumPlanes, bounds))
             {
+                cullable.OnVisible();
                 m_HizCullableList.Add(cullable);
+            }
+            else
+            {
+                // 只有完全在视锥体外部才剔除
+                cullable.OnCulled();
             }
         }
     }
@@ -225,7 +230,7 @@ public class HizCullingInfo {
     public Vector2Int ScreenResolution;
     //回读GPU数据,Native 内存需要手动释放
     public RenderTexture HizCullResultRT;
-    public NativeArray<byte> HizCullResultArray;
+    public NativeArray<float> HizCullResultArray;
     //剔除列表
     public int HizCullableCount;
     public IHizCullable[] HizCullableArray;
@@ -249,8 +254,8 @@ public class HizCullingInfo {
         HizCullAABBCenter = new Vector4[AABBRtSize * AABBRtSize];
         HizCullAABBExtent = new Vector4[AABBRtSize * AABBRtSize];
         HizCullableArray = new IHizCullable[AABBRtSize * AABBRtSize];
-        HizCullResultArray = new NativeArray<byte>(AABBRtSize * AABBRtSize, Allocator.Persistent);
-        HizCullResultRT = new RenderTexture(AABBRtSize, AABBRtSize, 0,RenderTextureFormat.R8,0) {
+        HizCullResultArray = new NativeArray<float>(AABBRtSize * AABBRtSize, Allocator.Persistent);
+        HizCullResultRT = new RenderTexture(AABBRtSize, AABBRtSize, 0,RenderTextureFormat.RFloat,0) {
             filterMode = FilterMode.Point,
             wrapMode = TextureWrapMode.Clamp
         };
@@ -366,4 +371,5 @@ public interface IHizCullable {
     public Vector3 GetWorldBoundsExtent();
     public void OnCulled();
     public void OnVisible();
+    public void SetLayer(bool isVisible);
 }

@@ -66,6 +66,17 @@ public class HizCullableMono : MonoBehaviour , IHizCullable
             m_IsCull = false;
         }
     }
+    public void SetLayer(bool isVisible)
+    {
+        if (isVisible)
+        {
+            
+        }
+        else
+        {
+            
+        }
+    }
 
     public bool IsCull() {
         return m_IsCull;
