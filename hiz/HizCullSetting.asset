@@ -16,7 +16,7 @@ MonoBehaviour:
   MaxMipLevel: 1
   MinMipResolutionSize: 2
   HizInfoBufferCount: 3
-  Size: 32
+  Size: 64
   HizMat: {fileID: 2100000, guid: ee0c794c353792c4fbecaaaeb437cce1, type: 2}
   DebugDrawCullObj: 1
   DebugLogWate: 0

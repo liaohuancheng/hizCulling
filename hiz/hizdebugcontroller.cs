@@ -15,7 +15,7 @@ public class HizDebugController : MonoBehaviour
 
     private void Start()
     {
-        Application.targetFrameRate = 60;
+        Application.targetFrameRate = 120;
     }
     private void OnGUI()
     {
@@ -49,6 +49,14 @@ public class HizDebugController : MonoBehaviour
         if (GUI.Button(new Rect(x, y, buttonSize.x, buttonSize.y), "清空测试物体", btnStyle))
         {
             ClearTestCubes();
+        }
+        
+        y += buttonSize.y + spacing;
+        GUI.backgroundColor = Color.white;
+        var text = HizCullingMgr.Instance.getR8() ? "关闭R8" : "开启R8";
+        if (GUI.Button(new Rect(x, y, buttonSize.x, buttonSize.y), text, btnStyle))
+        {
+            HizCullingMgr.Instance.SetR8();
         }
 
         // 状态显示

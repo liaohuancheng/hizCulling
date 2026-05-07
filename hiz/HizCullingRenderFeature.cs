@@ -207,12 +207,28 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             //设置 用来纹素采样的 像素偏移数组
             // cmd.SetGlobalVectorArray(HizShaderProperty.VectorArrayMipScaleOffset,hizInfo.HizMipScaleOffset);
             //开始算！
-            cmd.SetRenderTarget(hizInfo.HizCullResultRT, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            if (hizInfo.UseR8Format)
+            {
+                cmd.SetRenderTarget(hizInfo.HizCullResultRTR8, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            }
+            else
+            {
+                cmd.SetRenderTarget(hizInfo.HizCullResultRT, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            }
+            
             cmd.SetViewProjectionMatrices(Matrix4x4.identity,Matrix4x4.identity);
             cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_HizMat, 0, 3, m_PropBlock);
             cmd.SetViewProjectionMatrices(renderingData.cameraData.GetViewMatrix(),renderingData.cameraData.GetProjectionMatrix());
             //回读数据
-            cmd.RequestAsyncReadback(hizInfo.HizCullResultRT,hizInfo.AsyncReadBackResult);
+            if (hizInfo.UseR8Format)
+            {
+                cmd.RequestAsyncReadback(hizInfo.HizCullResultRTR8,hizInfo.AsyncReadBackResult);
+            }
+            else
+            {
+                cmd.RequestAsyncReadback(hizInfo.HizCullResultRT,hizInfo.AsyncReadBackResult);
+            }
+            
             //开始等待
             hizInfo.IsWating = true;
             hizInfo.RequesetFrameCount = Time.frameCount;

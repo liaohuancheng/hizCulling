@@ -34,6 +34,18 @@ public class HizCullingMgr {
             setting = value;
         }
     }
+
+    public void SetR8()
+    {
+        for (int i = 0; i < m_HizInfoBuffer.Count; i++) {
+            var temp = m_HizInfoBuffer[i];
+            temp.UseR8Format = !temp.UseR8Format;
+        }
+    }
+    public bool getR8()
+    {
+        return m_HizInfoBuffer[0].UseR8Format;
+    }
     public HizCullingInfo GetHizInfo(out bool isWating) {
         isWating = true;
         for (int i = 0; i < m_HizInfoBuffer.Count; i++) {
@@ -74,16 +86,33 @@ public class HizCullingMgr {
         }
         if (request.done) {
             info.IsWating = false;
-            info.HizCullResultArray = request.GetData<float>();
-            for (int i = 0; i < info.HizCullableCount; i++) {
-                var cullable = info.HizCullableArray[i];
-                if (info.HizCullResultArray[i] == 1) {
-                    cullable.OnCulled();
-                } 
-                else {
-                    cullable.OnVisible();
+            if (info.UseR8Format)
+            {
+                info.HizCullResultArray = request.GetData<float>();
+                for (int i = 0; i < info.HizCullableCount; i++) {
+                    var cullable = info.HizCullableArray[i];
+                    if (info.HizCullResultArray[i] == 1) {
+                        cullable.OnCulled();
+                    } 
+                    else {
+                        cullable.OnVisible();
+                    }
                 }
             }
+            else
+            {
+                info.HizCullResultArray_R8 = request.GetData<byte>();
+                for (int i = 0; i < info.HizCullableCount; i++) {
+                    var cullable = info.HizCullableArray[i];
+                    if (info.HizCullResultArray_R8[i] == 255) {
+                        cullable.OnCulled();
+                    } 
+                    else {
+                        cullable.OnVisible();
+                    }
+                }
+            }
+            
 
             if (Setting.DebugLogBack) {
                 Debug.Log($"<color=#64FF5A><b>BACK▶</b></color> Frame : {Time.frameCount} , ID :{info.ID} , Time : {Time.unscaledTime}, RequestFrame : {info.RequesetFrameCount} ");
@@ -244,6 +273,9 @@ public class HizCullingInfo {
     public bool IsWating;
     public Material HizMat;
     public Action<AsyncGPUReadbackRequest> AsyncReadBackResult;
+    public bool UseR8Format = false; // 是否使用 R8
+    public NativeArray<byte> HizCullResultArray_R8;
+    public RenderTexture HizCullResultRTR8;
     
     public HizCullingInfo(int id,HizAABBRtSize size,int maxMipLevel,int minMipResolutionSize,Material hizMat) {
         ID = id;
@@ -255,7 +287,12 @@ public class HizCullingInfo {
         HizCullAABBExtent = new Vector4[AABBRtSize * AABBRtSize];
         HizCullableArray = new IHizCullable[AABBRtSize * AABBRtSize];
         HizCullResultArray = new NativeArray<float>(AABBRtSize * AABBRtSize, Allocator.Persistent);
+        HizCullResultArray_R8 = new NativeArray<byte>(AABBRtSize * AABBRtSize, Allocator.Persistent);
         HizCullResultRT = new RenderTexture(AABBRtSize, AABBRtSize, 0,RenderTextureFormat.RFloat,0) {
+            filterMode = FilterMode.Point,
+            wrapMode = TextureWrapMode.Clamp
+        };
+        HizCullResultRTR8 = new RenderTexture(AABBRtSize, AABBRtSize, 0,RenderTextureFormat.R8,0) {
             filterMode = FilterMode.Point,
             wrapMode = TextureWrapMode.Clamp
         };
@@ -315,7 +352,10 @@ public class HizCullingInfo {
     //清空数据
     public void Dispose() {
         HizCullResultArray.Dispose();
+        HizCullResultArray_R8.Dispose();
         HizCullResultRT.Release();
+        HizCullResultRTR8.Release();
+        
     }
     //找到最适合当前屏幕分辨率对应的 Hiz 分辨率
     private Vector2Int GetHizMipResolution(int screenWidth,int screenHeight) {
