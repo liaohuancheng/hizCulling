@@ -64,8 +64,6 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
     private class HizMipGenerateRenderPass : ScriptableRenderPass {
         private Material m_HizMat;
         private RenderTargetIdentifier m_CameraDepthTexture;
-        private int m_HizCacheTexId = Shader.PropertyToID("_HizCacheTex");
-        private int m_HizViewportOffsetId = Shader.PropertyToID("_HizViewportOffset");
 
         public HizMipGenerateRenderPass() {
             renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
@@ -74,7 +72,7 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             if (renderingData.cameraData.cameraType != CameraType.Game) {
                 return;
             }
-              var hizInfo = HizCullingMgr.Instance.GetHizInfo(out _);
+            var hizInfo = HizCullingMgr.Instance.GetHizInfo(out _);
             hizInfo.UpdateHizInfo(ref renderingData);
             if (m_HizMat == null) {
                 m_HizMat = hizInfo.HizMat;
@@ -82,63 +80,38 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             m_CameraDepthTexture = HizShaderProperty.TextureLinearDepth;
             var cmd = CommandBufferPool.Get("HizMipGenerate");
             
+            //生成 Hiz Mip
             var mipCount = hizInfo.MinMipLevel + 1;
             var maxMipLevel = hizInfo.MaxMipLevel;
-
-            cmd.BeginSample("HizMipGenerate");
-
-            // 1. 申请图集 RT
-            cmd.GetTemporaryRT(HizShaderProperty.TextureHizMipAtlas, hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, 0, FilterMode.Point, RenderTextureFormat.RFloat);
-            
-            // 2. 将上级的结果缓存到一张图上：只申请一张 Cache RT，大小为最高级 Mip 的尺寸
-            var maxMipSize = hizInfo.HizMipResolutions[maxMipLevel];
-            cmd.GetTemporaryRT(m_HizCacheTexId, maxMipSize.x, maxMipSize.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear);
-
-            // 3. 我希望只进行一次 setrendertarget，设置目标图集
-            cmd.SetRenderTarget(HizShaderProperty.TextureHizMipAtlas, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
-
-            // 4. 设置 mipmaplevel 数量 
-            cmd.SetGlobalInt("_MipCount", mipCount);
-
-            cmd.SetViewProjectionMatrices(Matrix4x4.identity, Matrix4x4.identity);
-
-            // 5. 在 Shader 中一次性处理画的过程（利用视口直接向图集上绘制）
+            cmd.SetViewProjectionMatrices(Matrix4x4.identity,Matrix4x4.identity);
+            cmd.BeginSample("DownSample");
             for (int i = maxMipLevel; i < mipCount; i++) {
                 var mipSize = hizInfo.HizMipResolutions[i];
-                var scaleOffset = hizInfo.HizMipScaleOffset[i];
-                
-                // 设置视口为当前 Mip 级别在图集上的位置
-                cmd.SetViewport(new Rect(scaleOffset.z, scaleOffset.w, scaleOffset.x, scaleOffset.y));
-                
-                // 传给 Shader 当前的坐标偏移量，方便 Shader 计算正确的局部坐标
-                cmd.SetGlobalVector(m_HizViewportOffsetId, new Vector4(scaleOffset.z, scaleOffset.w, 0, 0));
-
-                // 指定采样源：第一级用原本生成的线性深度图，其余级用刚刚拷贝出上一级结果的缓存图
-                cmd.SetGlobalTexture("_SourceTex", i == maxMipLevel ? m_CameraDepthTexture : m_HizCacheTexId);
-                
+                cmd.GetTemporaryRT(HizShaderProperty.TextureHizMips[i], mipSize.x, mipSize.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear);
+                cmd.SetGlobalTexture("_SourceTex",i == maxMipLevel ? m_CameraDepthTexture : HizShaderProperty.TextureHizMips[i - 1]);
                 var sourceMipSize = i == maxMipLevel ? hizInfo.ScreenResolution : hizInfo.HizMipResolutions[i - 1];
-                cmd.SetGlobalVector(HizShaderProperty.VectorDownSampleTextrueSize, new Vector4(sourceMipSize.x / (float)mipSize.x, sourceMipSize.y / (float)mipSize.y, sourceMipSize.x - 1, sourceMipSize.y - 1));
-
-                // 绘制当前降采样结果到图集
-                cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_HizMat, 0, 0);
-
-                // 6. 将上级的结果缓存到一张图上，用于下一级的降采样
-                if (i < mipCount - 1) {
-                    cmd.CopyTexture(
-                        HizShaderProperty.TextureHizMipAtlas, 0, 0, 
-                        (int)scaleOffset.z, (int)scaleOffset.w, mipSize.x, mipSize.y, 
-                        m_HizCacheTexId, 0, 0, 0, 0
-                    );
-                }
+                cmd.SetGlobalVector(HizShaderProperty.VectorDownSampleTextrueSize,new Vector4(sourceMipSize.x / (float)mipSize.x,sourceMipSize.y / (float)mipSize.y,sourceMipSize.x - 1, sourceMipSize.y - 1));
+                cmd.SetRenderTarget(HizShaderProperty.TextureHizMips[i], RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+                cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_HizMat, 0, 0); 
             }
-
-            // 恢复相机矩阵
-            cmd.SetViewProjectionMatrices(renderingData.cameraData.GetViewMatrix(), renderingData.cameraData.GetProjectionMatrix());
-
-            // 释放单张临时缓存 RT
-            cmd.ReleaseTemporaryRT(m_HizCacheTexId);
-
-            cmd.EndSample("HizMipGenerate");
+            cmd.EndSample("DownSample");
+            //Blit HizMip Atlas ， 把生成的所有mip图 Blit 到图集上面
+            cmd.BeginSample("BlitAtlas");
+            cmd.GetTemporaryRT(HizShaderProperty.TextureHizMipAtlas,hizInfo.MipAtlasResolution.x,hizInfo.MipAtlasResolution.y,0, FilterMode.Point, RenderTextureFormat.RFloat);
+            cmd.SetRenderTarget(HizShaderProperty.TextureHizMipAtlas, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            var blitOffset = 0; //图集的偏移量和 mip等级没有关系，所以这里单独自增
+            for (int i = maxMipLevel; i < mipCount; i++) {
+                var scaleOffset = hizInfo.HizMipScaleOffset[i];
+                cmd.SetViewport(new Rect(scaleOffset.z,scaleOffset.w,scaleOffset.x,scaleOffset.y));
+                cmd.SetGlobalTexture("_SourceTex", HizShaderProperty.TextureHizMips[i]);
+                cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_HizMat, 0, 1);
+            }
+            cmd.SetViewProjectionMatrices(renderingData.cameraData.GetViewMatrix(),renderingData.cameraData.GetProjectionMatrix());
+            //释放临时RT
+            for (int i = 0; i < mipCount; i++) {
+                cmd.ReleaseTemporaryRT(HizShaderProperty.TextureHizMips[i]);
+            }
+            cmd.EndSample("BlitAtlas");
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }

@@ -121,30 +121,23 @@ HizDownSampleVertexOutput HizDownSampleVertex(HizDownSampleVertexInput v)
     return o;
 }
 
-float4 _HizViewportOffset;
-int _MipCount;
-
 float4 HizDownSampleFrag(HizDownSampleVertexOutput i) : SV_Target
 {
-    // 得到相对于当前 Viewport 起点的局部像素坐标
-    int2 localPos = int2(i.positionCS.xy - _HizViewportOffset.xy);
-    
-    // 使用局部坐标求得源纹理坐标
-    int2 texCoordinate00 = localPos * _HizDownSampleTextureSize.xy;
-    
-    // 纹理最大宽度
+    //return SAMPLE_TEXTURE2D_LOD(_SourceTex, sampler_SourceTex, i.uv, 0);
+
+    //得到纹理坐标
+    int2 texCoordinate00 = int2(i.positionCS.xy) * _HizDownSampleTextureSize.xy;
+    //int2 texCoordinate00 = i.uv * _HizDownSampleTextrueSize.xy;
+    //纹理最大宽度
     int2 maxTexCoordinate = _HizDownSampleTextureSize.zw;
-    
-    // 采样周围三个点，获取最小（或最大）深度
-    int2 texCoordinate01 = min(texCoordinate00 + int2(0,1), maxTexCoordinate);
-    int2 texCoordinate11 = min(texCoordinate00 + int2(1,1), maxTexCoordinate);
-    int2 texCoordinate10 = min(texCoordinate00 + int2(1,0), maxTexCoordinate);
-    
-    float depth00 = LOAD_TEXTURE2D_LOD(_SourceTex, texCoordinate00, 0).r;
-    float depth01 = LOAD_TEXTURE2D_LOD(_SourceTex, texCoordinate01, 0).r;
-    float depth11 = LOAD_TEXTURE2D_LOD(_SourceTex, texCoordinate11, 0).r;
-    float depth10 = LOAD_TEXTURE2D_LOD(_SourceTex, texCoordinate10, 0).r;
-    
+    //采样周围三个点，获取最小深度
+    int2 texCoordinate01 = min(texCoordinate00 + int2(0,1),maxTexCoordinate);
+    int2 texCoordinate11 = min(texCoordinate00 + int2(1,1),maxTexCoordinate);
+    int2 texCoordinate10 = min(texCoordinate00 + int2(1,0),maxTexCoordinate);
+    float depth00 = LOAD_TEXTURE2D_LOD(_SourceTex,texCoordinate00,0).r;
+    float depth01 = LOAD_TEXTURE2D_LOD(_SourceTex,texCoordinate01,0).r;
+    float depth11 = LOAD_TEXTURE2D_LOD(_SourceTex,texCoordinate11,0).r;
+    float depth10 = LOAD_TEXTURE2D_LOD(_SourceTex,texCoordinate10,0).r;
     //#if UNITY_REVERSED_Z
     return max(max(max(depth00, depth01), depth11), depth10);
     //#else
