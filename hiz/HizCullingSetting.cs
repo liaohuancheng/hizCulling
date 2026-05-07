@@ -8,7 +8,8 @@ using UnityEngine.Serialization;
 public class HizCullingSetting : ScriptableObject {
 
     public bool Enalbe;
-
+    public ComputeShader HizMipCS;
+    public ComputeShader HizCullCS;
     [Header("最大Mip等级,0 为原始分辨率的2次幂，递增2次幂降采样，默认为 1")]
     public int MaxMipLevel = 1;
     [FormerlySerializedAs("MinMipReslutionSize")] [Header("最小Mip分辨率大小，减少降采样次数，默认为 4")]

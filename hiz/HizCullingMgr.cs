@@ -86,9 +86,9 @@ public class HizCullingMgr {
         }
         if (request.done) {
             info.IsWating = false;
-            if (info.UseR8Format)
+            if (!info.UseR8Format)
             {
-                info.HizCullResultArray = request.GetData<float>();
+                info.HizCullResultArray = request.GetData<uint>();
                 for (int i = 0; i < info.HizCullableCount; i++) {
                     var cullable = info.HizCullableArray[i];
                     if (info.HizCullResultArray[i] == 1) {
@@ -182,7 +182,6 @@ public class HizCullingMgr {
             //视锥剔除
             if (GeometryUtility.TestPlanesAABB(m_FrustumPlanes, bounds))
             {
-                cullable.OnVisible();
                 m_HizCullableList.Add(cullable);
             }
             else
@@ -259,7 +258,7 @@ public class HizCullingInfo {
     public Vector2Int ScreenResolution;
     //回读GPU数据,Native 内存需要手动释放
     public RenderTexture HizCullResultRT;
-    public NativeArray<float> HizCullResultArray;
+    // public NativeArray<float> HizCullResultArray;
     //剔除列表
     public int HizCullableCount;
     public IHizCullable[] HizCullableArray;
@@ -277,6 +276,14 @@ public class HizCullingInfo {
     public NativeArray<byte> HizCullResultArray_R8;
     public RenderTexture HizCullResultRTR8;
     
+    // [新增] 用于给 CS 传 AABB 的 Buffer，将原本在 Pass 里的 Buffer 提上来
+    public ComputeBuffer AABBCenterBuffer;
+    public ComputeBuffer AABBExtentBuffer;
+    
+    // [新增] 用于存储 CS 结果的 Buffer
+    public ComputeBuffer HizCullResultBuffer;
+    public NativeArray<uint> HizCullResultArray; // 改用 uint 极度省内存
+    
     public HizCullingInfo(int id,HizAABBRtSize size,int maxMipLevel,int minMipResolutionSize,Material hizMat) {
         ID = id;
         AABBRtSize = (int)size;
@@ -286,8 +293,18 @@ public class HizCullingInfo {
         HizCullAABBCenter = new Vector4[AABBRtSize * AABBRtSize];
         HizCullAABBExtent = new Vector4[AABBRtSize * AABBRtSize];
         HizCullableArray = new IHizCullable[AABBRtSize * AABBRtSize];
-        HizCullResultArray = new NativeArray<float>(AABBRtSize * AABBRtSize, Allocator.Persistent);
-        HizCullResultArray_R8 = new NativeArray<byte>(AABBRtSize * AABBRtSize, Allocator.Persistent);
+        // HizCullResultArray = new NativeArray<float>(AABBRtSize * AABBRtSize, Allocator.Persistent);
+        // HizCullResultArray_R8 = new NativeArray<byte>(AABBRtSize * AABBRtSize, Allocator.Persistent);
+        
+        int totalCount = AABBRtSize * AABBRtSize;
+        // 申请 Compute Buffers
+        AABBCenterBuffer = new ComputeBuffer(totalCount, sizeof(float) * 4, ComputeBufferType.Structured);
+        AABBExtentBuffer = new ComputeBuffer(totalCount, sizeof(float) * 4, ComputeBufferType.Structured);
+        HizCullResultBuffer = new ComputeBuffer(totalCount, sizeof(uint), ComputeBufferType.Structured);
+        
+        // 申请原生内存接收回读
+        HizCullResultArray = new NativeArray<uint>(totalCount, Allocator.Persistent);
+        
         HizCullResultRT = new RenderTexture(AABBRtSize, AABBRtSize, 0,RenderTextureFormat.RFloat,0) {
             filterMode = FilterMode.Point,
             wrapMode = TextureWrapMode.Clamp
@@ -355,6 +372,9 @@ public class HizCullingInfo {
         HizCullResultArray_R8.Dispose();
         HizCullResultRT.Release();
         HizCullResultRTR8.Release();
+        AABBCenterBuffer?.Release();
+        AABBExtentBuffer?.Release();
+        HizCullResultBuffer?.Release();
         
     }
     //找到最适合当前屏幕分辨率对应的 Hiz 分辨率

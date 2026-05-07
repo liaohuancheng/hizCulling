@@ -12,6 +12,7 @@ Shader "Unlit/HizMat"
         Pass
         {
             HLSLPROGRAM
+            #pragma enable_d3d11_debug_symbols
             #pragma vertex HizDownSampleVertex
             #pragma fragment HizDownSampleFrag
             #include "HizCulling.hlsl"
@@ -22,6 +23,7 @@ Shader "Unlit/HizMat"
         Pass
         {
             HLSLPROGRAM
+            #pragma enable_d3d11_debug_symbols
             #pragma vertex HizBlitAtlasVertex
             #pragma fragment HizBlitAtlasFrag
             #include "HizCulling.hlsl"
@@ -32,6 +34,7 @@ Shader "Unlit/HizMat"
         Pass
         {
             HLSLPROGRAM
+            #pragma enable_d3d11_debug_symbols
             #pragma vertex HizAABBWriteVertex
             #pragma fragment HizAABBWriteFrag
             #include "HizCulling.hlsl"
@@ -42,6 +45,7 @@ Shader "Unlit/HizMat"
         Pass
         {
             HLSLPROGRAM
+            #pragma enable_d3d11_debug_symbols
             #pragma vertex HizCullingVertex
             #pragma fragment HizCullingFrag
             #include "HizCulling.hlsl"

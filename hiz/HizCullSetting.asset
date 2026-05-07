@@ -13,6 +13,8 @@ MonoBehaviour:
   m_Name: HizCullSetting
   m_EditorClassIdentifier: 
   Enalbe: 0
+  HizMipCS: {fileID: 7200000, guid: f107891f831d5ea41b74931fc78893b7, type: 3}
+  HizCullCS: {fileID: 7200000, guid: 94b62c1ab1c1b994ca6c4758b19b9002, type: 3}
   MaxMipLevel: 1
   MinMipResolutionSize: 2
   HizInfoBufferCount: 3

@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 using System.Collections.Generic;
+using UnityEngine.Rendering;
 using Random = UnityEngine.Random;
 
 public class HizDebugController : MonoBehaviour
@@ -16,6 +17,7 @@ public class HizDebugController : MonoBehaviour
     private void Start()
     {
         Application.targetFrameRate = 120;
+        GraphicsSettings.useScriptableRenderPipelineBatching = false;
     }
     private void OnGUI()
     {
