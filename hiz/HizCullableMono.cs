@@ -6,16 +6,25 @@ using UnityEngine;
 [RequireComponent(typeof(Renderer))]
 public class HizCullableMono : MonoBehaviour , IHizCullable
 {
+    public Transform CachedTransform { get;
+        set; }
+    public int HizIndex { get; set; } = -1;
     private bool m_NeedsUpdate = true;
     private Vector3 m_CachedCenter;
     private Vector3 m_CachedExtent;
     private Bounds m_CachedBounds;
+    private bool m_IsCull;
+    private Renderer m_Renderer;
 
     // 当物体移动后，手动调用此方法，或者通过脚本在 Transform 改变时触发
     public void MarkBoundsDirty() {
         m_NeedsUpdate = true;
+        UpdateCache();
+        if (HizCullingMgr.Instance != null && HizCullingMgr.Instance.IsEnable) {
+            HizCullingMgr.Instance.MarkDirty(this);
+        }
     }
-    private void UpdateCache() {
+    public void UpdateCache() {
         // 确保每帧只更新一次
         if (!m_NeedsUpdate) return;
 
@@ -51,6 +60,9 @@ public class HizCullableMono : MonoBehaviour , IHizCullable
     }
     void Awake() {
         m_Renderer = GetComponent<Renderer>();
+        CachedTransform = transform;
+        CachedTransform.hasChanged = false; // 初始化
+        UpdateCache();
     }
 
     public void OnCulled() {
@@ -82,6 +94,5 @@ public class HizCullableMono : MonoBehaviour , IHizCullable
         return m_IsCull;
     }
     
-    private bool m_IsCull;
-    private Renderer m_Renderer;
+
 }

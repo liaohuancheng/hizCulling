@@ -338,6 +338,7 @@ MonoBehaviour:
   spawnRange: 100
   buttonSize: {x: 200, y: 60}
   prefab: {fileID: 5850559074050702381, guid: 3078f59f6e171494e802132db2e3dff2, type: 3}
+  camTrans: {fileID: 1900725049}
 --- !u!114 &1900725051
 MonoBehaviour:
   m_ObjectHideFlags: 0

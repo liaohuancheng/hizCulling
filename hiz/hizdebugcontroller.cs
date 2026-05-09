@@ -13,6 +13,7 @@ public class HizDebugController : MonoBehaviour
     public GameObject prefab;
     private GameObject m_TestRoot;
     private List<GameObject> m_SpawnedObjects = new List<GameObject>();
+    public Transform camTrans;
 
     private void Start()
     {
@@ -73,20 +74,21 @@ public class HizDebugController : MonoBehaviour
         {
             m_TestRoot = new GameObject("Hiz_Test_Root");
         }
-
+        var camForward = camTrans.forward;
+        var camPos = camTrans.position;
+        
         // 随机生成
         for (int i = 0; i < spawnCount; i++)
         {
-            // 创建原始 Cube
-            var cube = Instantiate(prefab, m_TestRoot.transform);
+            // 1. 在相机前方的一个锥形/球壳区域内随机
+            // 这样可以确保物体分布在“远、中、近”不同的深度层级，测试 Hi-Z 效果
+            Vector3 randomDir = (camForward + Random.insideUnitSphere * 0.5f).normalized;
+            float dist = Random.Range(10, 500);
+            Vector3 spawnPos = camPos + randomDir * dist;
+
+            // 2. 实例化
+            var cube = Instantiate(prefab, spawnPos, Random.rotation, m_TestRoot.transform);
             
-            // 随机位置 (在相机前方的一定范围内)
-            Vector3 randomPos = new Vector3(
-                Random.Range(-spawnRange, spawnRange),
-                Random.Range(-10, 20), // 高度稍微集中一点
-                Random.Range(-spawnRange, spawnRange)
-            );
-            cube.transform.position = randomPos;
             
             // 随机缩放 (增加测试多样性)
             cube.transform.localScale = Vector3.one * Random.Range(0.5f, 3.0f);

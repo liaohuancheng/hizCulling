@@ -13,6 +13,14 @@ using UnityEngine.Rendering.Universal;
 /// 全局遮挡剔除管理器
 /// </summary>
 public class HizCullingMgr {
+    // [新增] 全局主机端 Master 数据池
+    public Vector4[] MasterAABBCenters;
+    public Vector4[] MasterAABBExtents;
+    public int ActiveCullableCount => m_HizCullableList.Count;
+
+    private List<IHizCullable> m_HizCullableList;
+    private HashSet<IHizCullable> m_DirtySet; // [新增] 脏列表
+    
     public static HizCullingMgr Instance {
         get {
             if (m_Instance == null) {
@@ -58,16 +66,45 @@ public class HizCullingMgr {
         return null;
     }
     public void AddCullable(IHizCullable cullable) {
-        m_HizCullableMap.Add(cullable);
+        if (cullable.HizIndex != -1) return;
+    
+        int index = m_HizCullableList.Count;
+        cullable.HizIndex = index;
+        m_HizCullableList.Add(cullable);
+    
+        // [新增] 静态物体：只在添加时计算并写入 Master 数据池
+        cullable.UpdateCache();
+        MasterAABBCenters[index] = cullable.GetWorldBoundsCenter();
+        MasterAABBExtents[index] = cullable.GetWorldBoundsExtent();
     }
+    
+    public void MarkDirty(IHizCullable cullable) {
+        m_DirtySet.Add(cullable);
+    }
+    
     public void RemoveCullable(IHizCullable cullable) {
-        if (m_HizCullableMap.Contains(cullable)) {
-            m_HizCullableMap.Remove(cullable);
+        int index = cullable.HizIndex;
+        if (index < 0 || index >= m_HizCullableList.Count) return;
+
+        int lastIndex = m_HizCullableList.Count - 1;
+        if (index < lastIndex) {
+            IHizCullable lastObj = m_HizCullableList[lastIndex];
+            m_HizCullableList[index] = lastObj;
+            lastObj.HizIndex = index;
+
+            // 同步数据池：静态物体的关键
+            MasterAABBCenters[index] = MasterAABBCenters[lastIndex];
+            MasterAABBExtents[index] = MasterAABBExtents[lastIndex];
         }
+
+        m_HizCullableList.RemoveAt(lastIndex);
+        cullable.HizIndex = -1;
+        cullable.OnVisible(); 
     }
     public void Init(Camera camera,HizCullingSetting setting) {
         m_Camera = camera;
         this.setting = setting;
+        
         //生成缓冲区
         m_HizInfoBuffer = new List<HizCullingInfo>(this.setting.HizInfoBufferCount);
         for (int i = 0; i < Setting.HizInfoBufferCount; i++) {
@@ -86,58 +123,46 @@ public class HizCullingMgr {
         }
         if (request.done) {
             info.IsWating = false;
-            if (!info.UseR8Format)
-            {
-                info.HizCullResultArray = request.GetData<uint>();
-                for (int i = 0; i < info.HizCullableCount; i++) {
-                    var cullable = info.HizCullableArray[i];
-                    if (info.HizCullResultArray[i] == 1) {
-                        cullable.OnCulled();
-                    } 
-                    else {
-                        cullable.OnVisible();
-                    }
+            info.HizCullResultArray = request.GetData<uint>();
+            for (int i = 0; i < info.HizCullableCount; i++) {
+                var cullable = info.HizCullableArray[i];
+                if (info.HizCullResultArray[i] == 1) {
+                    cullable.OnCulled();
+                } 
+                else {
+                    cullable.OnVisible();
                 }
             }
-            else
-            {
-                info.HizCullResultArray_R8 = request.GetData<byte>();
-                for (int i = 0; i < info.HizCullableCount; i++) {
-                    var cullable = info.HizCullableArray[i];
-                    if (info.HizCullResultArray_R8[i] == 255) {
-                        cullable.OnCulled();
-                    } 
-                    else {
-                        cullable.OnVisible();
-                    }
-                }
-            }
-            
 
             if (Setting.DebugLogBack) {
                 Debug.Log($"<color=#64FF5A><b>BACK▶</b></color> Frame : {Time.frameCount} , ID :{info.ID} , Time : {Time.unscaledTime}, RequestFrame : {info.RequesetFrameCount} ");
             }
         } 
     }
+    private int m_CurrentCheckIndex = 0;
+    private const int CHECKS_PER_FRAME = 500; // 每帧只查500个
+    
+    
     public void Update() {
-        if (IsEnable) {
-            Profiler.BeginSample("PreFilterCullable");
-            PreFilterCullable();
-            Profiler.EndSample();
-            Profiler.BeginSample("UpdateBoundsData");
-            UpdateBoundsData();
-            Profiler.EndSample();
-        }
+        if (!IsEnable) return;
+        Profiler.BeginSample("UpdateBoundsData");
+        UpdateBoundsData();
+        Profiler.EndSample();
     }
     public void Open() {
         Setting.Enalbe = true;
     }
     public void Close() {
         Setting.Enalbe = false;
-        foreach (var cullable in m_HizCullableMap) {
-            cullable.OnVisible();
+
+
+        foreach (var hizCullable in m_HizCullableList)
+        {
+            hizCullable.OnVisible();
         }
+
     }
+    
     public void Dispose() {
         Setting.Enalbe = false;
         for (int i = 0; i < m_HizInfoBuffer.Count; i++) {
@@ -151,13 +176,14 @@ public class HizCullingMgr {
     
     private static HizCullingMgr m_Instance;
     private HizCullingSetting setting;
-    private List<IHizCullable> m_HizCullableList;
     private List<HizCullingInfo> m_HizInfoBuffer;
-    private List<IHizCullable> m_HizCullableMap;
     private Camera m_Camera;
     private HizCullingMgr() {
         m_HizCullableList = new List<IHizCullable>();
-        m_HizCullableMap = new List<IHizCullable>();
+        m_DirtySet = new HashSet<IHizCullable>();
+        var maxCapacity = 16384;
+        MasterAABBCenters = new Vector4[maxCapacity];
+        MasterAABBExtents = new Vector4[maxCapacity];
 #if UNITY_EDITOR
         SceneView.duringSceneGui -= DrawSceneView;
         SceneView.duringSceneGui += DrawSceneView;
@@ -173,48 +199,28 @@ public class HizCullingMgr {
         Vector3 camPos = camTransform.position;
         var cameraForward = m_Camera.transform.forward;
         GeometryUtility.CalculateFrustumPlanes(m_Camera, m_FrustumPlanes);
-        for (int i = 0; i < m_HizCullableMap.Count; i++)
-        {
-            var cullable = m_HizCullableMap[i];
-            var bounds = cullable.GetWorldBounds();
-            
-            
-            //视锥剔除
-            if (GeometryUtility.TestPlanesAABB(m_FrustumPlanes, bounds))
-            {
-                m_HizCullableList.Add(cullable);
-            }
-            else
-            {
-                // 只有完全在视锥体外部才剔除
-                cullable.OnCulled();
-            }
-        }
     }
     private void UpdateBoundsData() {
+        
         var hizInfo = GetHizInfo(out var isWating);
-        if (isWating) {
-            if (Setting.DebugLogWate) {
-                Debug.Log($"<color=#FF6347><b>WATE▶</b></color> Frame : {Time.frameCount}");
-            }
-            return;
-        }
+        if (isWating) return;
+        
+        int count = m_HizCullableList.Count;
+        hizInfo.HizCullableCount = count;
 
-        if (Setting.DebugLogSend) {
-            Debug.Log($"<color=#5B9BFF><b>SEND▶</b></color> Frame : {Time.frameCount} , ID : {hizInfo.ID} , Time : {Time.unscaledTime}");
+        // 2. 拷贝引用快照（极快：只是拷贝 4 或 8 字节的内存地址）
+        // 这是为了异步回读时能找到对应的 Renderer
+        for (int i = 0; i < count; i++) {
+            hizInfo.HizCullableArray[i] = m_HizCullableList[i];
         }
-        //把需要进行遮挡剔除的物体，填充到列表中
-        hizInfo.HizCullableCount = 0;
-        var cullableCount = m_HizCullableList.Count;
-        for (int i = 0; i < hizInfo.HizCullableArray.Length; i++) {
-            if (i < cullableCount) {
-                var cullable = m_HizCullableList[i];
-                hizInfo.HizCullableArray[i] = cullable;
-                hizInfo.HizCullAABBCenter[i] = cullable.GetWorldBoundsCenter(); 
-                hizInfo.HizCullAABBExtent[i] = cullable.GetWorldBoundsExtent(); 
-                hizInfo.HizCullableCount++;
-            }
+        
+
+        // 计算当前帧相机的视锥平面，用于传给 GPU
+        Plane[] planes = GeometryUtility.CalculateFrustumPlanes(m_Camera);
+        for(int i = 0; i < 6; i++) {
+            hizInfo.FrustumPlanes[i] = new Vector4(planes[i].normal.x, planes[i].normal.y, planes[i].normal.z, planes[i].distance + 1.0f);
         }
+        hizInfo.RequesetFrameCount = Time.frameCount;
     }
     
 #if UNITY_EDITOR
@@ -275,6 +281,8 @@ public class HizCullingInfo {
     public bool UseR8Format = false; // 是否使用 R8
     public NativeArray<byte> HizCullResultArray_R8;
     public RenderTexture HizCullResultRTR8;
+    // 在 HizCullingInfo 类的变量声明处新增:
+    public Vector4[] FrustumPlanes = new Vector4[6]; // [新增] 保存视锥平面
     
     // [新增] 用于给 CS 传 AABB 的 Buffer，将原本在 Pass 里的 Buffer 提上来
     public ComputeBuffer AABBCenterBuffer;
@@ -290,8 +298,6 @@ public class HizCullingInfo {
         MaxMipLevel = maxMipLevel;
         MinMipResolutionSize = minMipResolutionSize;
         HizMat = hizMat;
-        HizCullAABBCenter = new Vector4[AABBRtSize * AABBRtSize];
-        HizCullAABBExtent = new Vector4[AABBRtSize * AABBRtSize];
         HizCullableArray = new IHizCullable[AABBRtSize * AABBRtSize];
         // HizCullResultArray = new NativeArray<float>(AABBRtSize * AABBRtSize, Allocator.Persistent);
         // HizCullResultArray_R8 = new NativeArray<byte>(AABBRtSize * AABBRtSize, Allocator.Persistent);
@@ -425,6 +431,8 @@ public enum HizAABBRtSize {
 }
 //遮挡剔除对象 接口， 实现了这个接口的对象就可以进行遮挡剔除
 public interface IHizCullable {
+    public Transform CachedTransform { get; set; }
+    int HizIndex { get; set; } //[新增]
     public bool IsCull();
     public Bounds GetWorldBounds();
     public Vector3 GetWorldBoundsCenter();
@@ -432,4 +440,6 @@ public interface IHizCullable {
     public void OnCulled();
     public void OnVisible();
     public void SetLayer(bool isVisible);
+    void UpdateCache();
+    void MarkBoundsDirty();
 }
