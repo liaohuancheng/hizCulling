@@ -37,7 +37,7 @@ public class FlyCamera : MonoBehaviour
     void Update()
     {
         // 区分平台处理
-#if UNITY_ANDROID || UNITY_IOS
+#if (UNITY_ANDROID || UNITY_IOS) && !UNITY_EDITOR
         HandleMobileInputs();
 #else
         HandleRotation();

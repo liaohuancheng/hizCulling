@@ -181,7 +181,7 @@ public class HizCullingMgr {
     private HizCullingMgr() {
         m_HizCullableList = new List<IHizCullable>();
         m_DirtySet = new HashSet<IHizCullable>();
-        var maxCapacity = 16384;
+        int maxCapacity = 16384; 
         MasterAABBCenters = new Vector4[maxCapacity];
         MasterAABBExtents = new Vector4[maxCapacity];
 #if UNITY_EDITOR

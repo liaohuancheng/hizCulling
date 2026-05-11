@@ -1,40 +1,43 @@
 #pragma kernel CSMain
 
-Texture2D<float> _SourceTex;
-RWTexture2D<float> _HizMipAtlas;
+Texture2D<float> _SourceTex;        // 输入：上一级的缓存（或原始深度图）
+RWTexture2D<float> _HizMipAtlas;   // 输出：最终的大图集
+RWTexture2D<float> _HizCacheTex;   // 输出：当前级的临时缓存（供下一级读取）
 
-float4 _DstOffset; // xy: 写入到图集的像素偏移
+float4 _DstOffset; // xy: 在图集中的像素偏移
 float4 _DstSize;   // xy: 当前 Mip 的尺寸
-float4 _SrcSize;   // xy: 源图像尺寸, zw: 源图像尺寸 - 1 (用于越界限制)
+float4 _SrcSize;   // xy: 源图像尺寸, zw: 源图像尺寸 - 1
 float4 _Scale;     // xy: 缩放比 (SrcSize / DstSize)
 
 [numthreads(8, 8, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
-    // 防止线程组越界
+    // 越界保护
     if (id.x >= (uint)_DstSize.x || id.y >= (uint)_DstSize.y)
         return;
 
-    // 映射到源纹理的起始坐标
+    // 计算采样坐标 (2x2)
     int2 texCoordinate00 = (int2)(id.xy * _Scale.xy);
     int2 maxTexCoordinate = (int2)_SrcSize.zw;
 
-    // 获取 2x2 的采样点，并限制在最大范围内
     int2 p00 = texCoordinate00;
     int2 p10 = min(texCoordinate00 + int2(1, 0), maxTexCoordinate);
     int2 p01 = min(texCoordinate00 + int2(0, 1), maxTexCoordinate);
     int2 p11 = min(texCoordinate00 + int2(1, 1), maxTexCoordinate);
 
-    // 采样源贴图（无论是基础线性深度图还是上一级的缓存图）
+    // 采样
     float d00 = _SourceTex[p00];
     float d10 = _SourceTex[p10];
     float d01 = _SourceTex[p01];
     float d11 = _SourceTex[p11];
 
-    // 获取深度的最大值（保留了你原本取 MAX 的剔除逻辑）
+    // 取最大深度
     float maxDepth = max(max(d00, d10), max(d01, d11));
 
-    // 计算当前在图集中的写入位置，并写入数据
-    int2 dstPos = id.xy + (int2)_DstOffset.xy;
-    _HizMipAtlas[dstPos] = maxDepth;
+    // 1. 写入大图集（带偏移）
+    int2 atlasPos = id.xy + (int2)_DstOffset.xy;
+    _HizMipAtlas[atlasPos] = maxDepth;
+
+    // 2. 写入当前级缓存（不带偏移，从 0,0 开始）
+    _HizCacheTex[id.xy] = maxDepth;
 }

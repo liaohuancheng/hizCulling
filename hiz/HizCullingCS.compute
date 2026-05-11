@@ -47,10 +47,6 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     // ==========================================
     // 阶段 1：视锥剔除 (Frustum Culling)
     // ==========================================
-    
-    // 增加一个额外的安全半径，防止大物体在边缘闪烁
-    // 尤其是地形这种 extent 很大的物体
-
     for (int p = 0; p < 6; p++)
     {
         float4 plane = _FrustumPlanes[p];

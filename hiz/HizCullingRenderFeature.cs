@@ -62,91 +62,78 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
     }
     //生成 HizMipAtlas
     private class HizMipGenerateRenderPass : ScriptableRenderPass {
-        private Material m_HizMat;
-        private RenderTargetIdentifier m_CameraDepthTexture;
+        private int m_HizCacheAId = Shader.PropertyToID("_HizCacheA");
+        private int m_HizCacheBId = Shader.PropertyToID("_HizCacheB");
         
-        private int m_HizCacheTexId = Shader.PropertyToID("_HizCacheTex");
-        
-        // 缓存 CS 属性 ID
         private int m_DstOffsetId = Shader.PropertyToID("_DstOffset");
         private int m_DstSizeId = Shader.PropertyToID("_DstSize");
         private int m_SrcSizeId = Shader.PropertyToID("_SrcSize");
         private int m_ScaleId = Shader.PropertyToID("_Scale");
-        public HizMipGenerateRenderPass() {
-            renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
-        }
-        
+
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
-            if (renderingData.cameraData.cameraType != CameraType.Game) {
-                return;
-            }
+            if (renderingData.cameraData.cameraType != CameraType.Game) return;
 
             var hizInfo = HizCullingMgr.Instance.GetHizInfo(out _);
             hizInfo.UpdateHizInfo(ref renderingData);
 
-            // 获取绑定的 ComputeShader
             var mipCS = HizCullingMgr.Instance.Setting.HizMipCS;
-            if (mipCS == null) {
-                Debug.LogError("HizMipCS is missing in Setting!");
-                return;
-            }
             int kernel = mipCS.FindKernel("CSMain");
+            var cmd = CommandBufferPool.Get("HizMipPingPong");
 
-            m_CameraDepthTexture = HizShaderProperty.TextureLinearDepth;
-            var cmd = CommandBufferPool.Get("HizMipGenerateCS");
-            
+            // 1. 申请大图集 (RFloat)
+            cmd.GetTemporaryRT(HizShaderProperty.TextureHizMipAtlas, 
+                hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, 
+                0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear, 1, true);
+
+            // 2. 申请两个 Ping-Pong 缓存
+            // 尺寸设为 Mip 1 的大小即可（因为后续 Mip 越来越小）
+            var cacheSize = hizInfo.HizMipResolutions[hizInfo.MaxMipLevel]; 
+            cmd.GetTemporaryRT(m_HizCacheAId, cacheSize.x, cacheSize.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear, 1, true);
+            cmd.GetTemporaryRT(m_HizCacheBId, cacheSize.x, cacheSize.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear, 1, true);
+
             var mipCount = hizInfo.MinMipLevel + 1;
             var maxMipLevel = hizInfo.MaxMipLevel;
 
-            cmd.BeginSample("HizMipGenerateCS");
-
-            // 1. 申请图集 RT，注意第9个参数 true 表示 enableRandomWrite = true，允许 ComputeShader 写入
-            cmd.GetTemporaryRT(HizShaderProperty.TextureHizMipAtlas, hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear, 1, true);
-            
-            // 2. 将上级的结果缓存到一张图上：只申请一张 Cache RT，大小为最高级 Mip 的尺寸 (用于拷贝不参与 CS 直接写入)
-            var maxMipSize = hizInfo.HizMipResolutions[maxMipLevel];
-            cmd.GetTemporaryRT(m_HizCacheTexId, maxMipSize.x, maxMipSize.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear);
-
-            // 3. 在 ComputeShader 中一次性处理降采样计算
             for (int i = maxMipLevel; i < mipCount; i++) {
                 var mipSize = hizInfo.HizMipResolutions[i];
                 var scaleOffset = hizInfo.HizMipScaleOffset[i];
                 var sourceMipSize = i == maxMipLevel ? hizInfo.ScreenResolution : hizInfo.HizMipResolutions[i - 1];
 
-                // 传给 CS 的参数
+                // 确定输入源和输出缓存
+                RenderTargetIdentifier srcTex;
+                RenderTargetIdentifier dstCache;
+
+                if (i == maxMipLevel) {
+                    srcTex = HizShaderProperty.TextureLinearDepth;
+                    dstCache = m_HizCacheAId;
+                } else {
+                    // 奇数级读 A 写 B，偶数级读 B 写 A
+                    bool isEven = (i - maxMipLevel) % 2 == 0;
+                    srcTex = isEven ? m_HizCacheBId : m_HizCacheAId;
+                    dstCache = isEven ? m_HizCacheAId : m_HizCacheBId;
+                }
+
+                // 设置参数
                 cmd.SetComputeVectorParam(mipCS, m_DstOffsetId, new Vector4(scaleOffset.z, scaleOffset.w, 0, 0));
                 cmd.SetComputeVectorParam(mipCS, m_DstSizeId, new Vector4(mipSize.x, mipSize.y, 0, 0));
                 cmd.SetComputeVectorParam(mipCS, m_SrcSizeId, new Vector4(sourceMipSize.x, sourceMipSize.y, sourceMipSize.x - 1, sourceMipSize.y - 1));
                 cmd.SetComputeVectorParam(mipCS, m_ScaleId, new Vector4(sourceMipSize.x / (float)mipSize.x, sourceMipSize.y / (float)mipSize.y, 0, 0));
 
-                // 指定采样源和输出图集：第一级用原本生成的线性深度图，其余级用刚刚拷贝出上一级结果的缓存图
-                cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", i == maxMipLevel ? m_CameraDepthTexture : m_HizCacheTexId);
+                cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", srcTex);
                 cmd.SetComputeTextureParam(mipCS, kernel, "_HizMipAtlas", HizShaderProperty.TextureHizMipAtlas);
+                cmd.SetComputeTextureParam(mipCS, kernel, "_HizCacheTex", dstCache);
 
-                // 根据当前 Mip 的尺寸计算 Dispatch 的线程组数量（每个组 8x8）
                 int groupX = Mathf.CeilToInt(mipSize.x / 8.0f);
                 int groupY = Mathf.CeilToInt(mipSize.y / 8.0f);
-
                 cmd.DispatchCompute(mipCS, kernel, groupX, groupY, 1);
-
-                // 4. 将刚才写入到图集上的当前级结果拷贝到 Cache RT，用于下一级的 _SourceTex 读取
-                if (i < mipCount - 1) {
-                    cmd.CopyTexture(
-                        HizShaderProperty.TextureHizMipAtlas, 0, 0, 
-                        (int)scaleOffset.z, (int)scaleOffset.w, mipSize.x, mipSize.y, 
-                        m_HizCacheTexId, 0, 0, 0, 0
-                    );
-                }
             }
 
-            // 释放单张临时缓存 RT
-            cmd.ReleaseTemporaryRT(m_HizCacheTexId);
+            cmd.ReleaseTemporaryRT(m_HizCacheAId);
+            cmd.ReleaseTemporaryRT(m_HizCacheBId);
 
-            cmd.EndSample("HizMipGenerateCS");
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }
-        
     }
     //遮挡剔除计算，请求回读数据
     private class HizCullingRenderPass : ScriptableRenderPass {
