@@ -14,11 +14,15 @@ public class HizDebugController : MonoBehaviour
     private GameObject m_TestRoot;
     private List<GameObject> m_SpawnedObjects = new List<GameObject>();
     public Transform camTrans;
-
+    
+    public int testWidth = 1333; // 奇数，且不是8的倍数
+    public int testHeight = 751; // 奇数
     private void Start()
     {
         Application.targetFrameRate = 120;
         GraphicsSettings.useScriptableRenderPipelineBatching = false;
+        
+        Screen.SetResolution(testWidth, testHeight, FullScreenMode.Windowed);
     }
     private void OnGUI()
     {
