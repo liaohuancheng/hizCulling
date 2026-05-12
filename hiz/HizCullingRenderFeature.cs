@@ -50,7 +50,7 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
                 m_HizMat = hizInfo.HizMat;
             }
             var cmd = CommandBufferPool.Get("CopyLinearDepth");
-            cmd.GetTemporaryRT(HizShaderProperty.TextureLinearDepth,renderingData.cameraData.cameraTargetDescriptor.width,renderingData.cameraData.cameraTargetDescriptor.height,0, FilterMode.Point, RenderTextureFormat.RHalf);
+            cmd.GetTemporaryRT(HizShaderProperty.TextureLinearDepth,renderingData.cameraData.cameraTargetDescriptor.width,renderingData.cameraData.cameraTargetDescriptor.height,0, FilterMode.Point, RenderTextureFormat.RFloat);
             cmd.SetRenderTarget(HizShaderProperty.TextureLinearDepth, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
             cmd.SetViewProjectionMatrices(Matrix4x4.identity,Matrix4x4.identity);
             cmd.SetGlobalTexture("_SourceTex", renderingData.cameraData.renderer.cameraDepthTarget);
@@ -87,8 +87,12 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             cmd.BeginSample("HizMipGenerateCS");
 
             // 1. 申请图集 RT (确保 enableRandomWrite = true)
-            cmd.GetTemporaryRT(HizShaderProperty.TextureHizMipAtlas, hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, 0, FilterMode.Point, RenderTextureFormat.RHalf, RenderTextureReadWrite.Linear, 1, true);
+            cmd.GetTemporaryRT(HizShaderProperty.TextureHizMipAtlas, hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear, 1, true);
             
+            // 这一步解决了从 GetTemporaryRT 获取到“脏显存”导致随机红点的问题
+            cmd.SetRenderTarget(HizShaderProperty.TextureHizMipAtlas, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            cmd.ClearRenderTarget(false, true, Color.black); 
+            // ---------------------------------------
             // 2. 绑定全局资源
             cmd.SetComputeTextureParam(mipCS, kernel, "_HizMipAtlas", HizShaderProperty.TextureHizMipAtlas);
             cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", HizShaderProperty.TextureLinearDepth);
