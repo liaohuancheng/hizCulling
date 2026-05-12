@@ -50,7 +50,7 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
                 m_HizMat = hizInfo.HizMat;
             }
             var cmd = CommandBufferPool.Get("CopyLinearDepth");
-            cmd.GetTemporaryRT(HizShaderProperty.TextureLinearDepth,renderingData.cameraData.cameraTargetDescriptor.width,renderingData.cameraData.cameraTargetDescriptor.height,0, FilterMode.Point, RenderTextureFormat.RFloat);
+            cmd.GetTemporaryRT(HizShaderProperty.TextureLinearDepth,renderingData.cameraData.cameraTargetDescriptor.width,renderingData.cameraData.cameraTargetDescriptor.height,0, FilterMode.Point, RenderTextureFormat.RHalf);
             cmd.SetRenderTarget(HizShaderProperty.TextureLinearDepth, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
             cmd.SetViewProjectionMatrices(Matrix4x4.identity,Matrix4x4.identity);
             cmd.SetGlobalTexture("_SourceTex", renderingData.cameraData.renderer.cameraDepthTarget);
@@ -62,14 +62,18 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
     }
     //生成 HizMipAtlas
     private class HizMipGenerateRenderPass : ScriptableRenderPass {
-        private int m_HizCacheAId = Shader.PropertyToID("_HizCacheA");
-        private int m_HizCacheBId = Shader.PropertyToID("_HizCacheB");
-        
+        // 缓存 ID
         private int m_DstOffsetId = Shader.PropertyToID("_DstOffset");
         private int m_DstSizeId = Shader.PropertyToID("_DstSize");
         private int m_SrcSizeId = Shader.PropertyToID("_SrcSize");
         private int m_ScaleId = Shader.PropertyToID("_Scale");
+        private int m_IsFirstMipId = Shader.PropertyToID("_IsFirstMip");
+        private int m_SrcOffsetId = Shader.PropertyToID("_SrcOffset");
 
+        public HizMipGenerateRenderPass() {
+            renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
+        }
+        
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
             if (renderingData.cameraData.cameraType != CameraType.Game) return;
 
@@ -78,63 +82,58 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
 
             var mipCS = HizCullingMgr.Instance.Setting.HizMipCS;
             int kernel = mipCS.FindKernel("CSMain");
-            var cmd = CommandBufferPool.Get("HizMipPingPong");
 
-            // 1. 申请大图集 (RFloat)
-            cmd.GetTemporaryRT(HizShaderProperty.TextureHizMipAtlas, 
-                hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, 
-                0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear, 1, true);
+            var cmd = CommandBufferPool.Get("HizMipGenerateCS");
+            cmd.BeginSample("HizMipGenerateCS");
 
-            // 2. 申请两个 Ping-Pong 缓存
-            // 尺寸设为 Mip 1 的大小即可（因为后续 Mip 越来越小）
-            var cacheSize = hizInfo.HizMipResolutions[hizInfo.MaxMipLevel]; 
-            cmd.GetTemporaryRT(m_HizCacheAId, cacheSize.x, cacheSize.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear, 1, true);
-            cmd.GetTemporaryRT(m_HizCacheBId, cacheSize.x, cacheSize.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear, 1, true);
+            // 1. 申请图集 RT (确保 enableRandomWrite = true)
+            cmd.GetTemporaryRT(HizShaderProperty.TextureHizMipAtlas, hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, 0, FilterMode.Point, RenderTextureFormat.RHalf, RenderTextureReadWrite.Linear, 1, true);
+            
+            // 2. 绑定全局资源
+            cmd.SetComputeTextureParam(mipCS, kernel, "_HizMipAtlas", HizShaderProperty.TextureHizMipAtlas);
+            cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", HizShaderProperty.TextureLinearDepth);
 
             var mipCount = hizInfo.MinMipLevel + 1;
             var maxMipLevel = hizInfo.MaxMipLevel;
 
+            // 3. 逐级派发 Dispatch
             for (int i = maxMipLevel; i < mipCount; i++) {
-                var mipSize = hizInfo.HizMipResolutions[i];
-                var scaleOffset = hizInfo.HizMipScaleOffset[i];
-                var sourceMipSize = i == maxMipLevel ? hizInfo.ScreenResolution : hizInfo.HizMipResolutions[i - 1];
+                var mipSize = hizInfo.HizMipResolutions[i];         // 当前要生成的层级尺寸
+                var scaleOffset = hizInfo.HizMipScaleOffset[i];     // 当前要写入的目标偏移 (z,w)
+                
+                bool isFirst = (i == maxMipLevel);
+                // 源尺寸：如果是第一级，源是屏幕分辨率；否则源是上一级分辨率
+                var sourceMipSize = isFirst ? hizInfo.ScreenResolution : hizInfo.HizMipResolutions[i - 1];
 
-                // 确定输入源和输出缓存
-                RenderTargetIdentifier srcTex;
-                RenderTargetIdentifier dstCache;
+                // 设置标志位
+                cmd.SetComputeIntParam(mipCS, m_IsFirstMipId, isFirst ? 1 : 0);
 
-                if (i == maxMipLevel) {
-                    srcTex = HizShaderProperty.TextureLinearDepth;
-                    dstCache = m_HizCacheAId;
-                } else {
-                    // 奇数级读 A 写 B，偶数级读 B 写 A
-                    bool isEven = (i - maxMipLevel) % 2 == 0;
-                    srcTex = isEven ? m_HizCacheBId : m_HizCacheAId;
-                    dstCache = isEven ? m_HizCacheAId : m_HizCacheBId;
+                // 如果不是第一级，告诉 Shader 上一级在图集里的什么位置
+                if (!isFirst) {
+                    var prevScaleOffset = hizInfo.HizMipScaleOffset[i - 1];
+                    cmd.SetComputeVectorParam(mipCS, m_SrcOffsetId, new Vector4(prevScaleOffset.z, prevScaleOffset.w, 0, 0));
                 }
 
-                // 设置参数
+                // 设置当前写入目标参数
                 cmd.SetComputeVectorParam(mipCS, m_DstOffsetId, new Vector4(scaleOffset.z, scaleOffset.w, 0, 0));
                 cmd.SetComputeVectorParam(mipCS, m_DstSizeId, new Vector4(mipSize.x, mipSize.y, 0, 0));
                 cmd.SetComputeVectorParam(mipCS, m_SrcSizeId, new Vector4(sourceMipSize.x, sourceMipSize.y, sourceMipSize.x - 1, sourceMipSize.y - 1));
                 cmd.SetComputeVectorParam(mipCS, m_ScaleId, new Vector4(sourceMipSize.x / (float)mipSize.x, sourceMipSize.y / (float)mipSize.y, 0, 0));
 
-                cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", srcTex);
-                cmd.SetComputeTextureParam(mipCS, kernel, "_HizMipAtlas", HizShaderProperty.TextureHizMipAtlas);
-                cmd.SetComputeTextureParam(mipCS, kernel, "_HizCacheTex", dstCache);
-
+                // 计算组数量
                 int groupX = Mathf.CeilToInt(mipSize.x / 8.0f);
                 int groupY = Mathf.CeilToInt(mipSize.y / 8.0f);
+
+                // 重要：在移动端，连续 Dispatch 同一个 RWTexture，Unity 会自动处理 Barrier
                 cmd.DispatchCompute(mipCS, kernel, groupX, groupY, 1);
             }
 
-            cmd.ReleaseTemporaryRT(m_HizCacheAId);
-            cmd.ReleaseTemporaryRT(m_HizCacheBId);
-
+            cmd.EndSample("HizMipGenerateCS");
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }
     }
+
     //遮挡剔除计算，请求回读数据
     private class HizCullingRenderPass : ScriptableRenderPass {
         private Material m_HizMat;
