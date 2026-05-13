@@ -1,4 +1,3 @@
-#pragma enable_d3d11_debug_symbols
 #pragma kernel CSMain
 
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
@@ -14,20 +13,26 @@ float4 _HizMinMaxMipAndScreenSize;
 float4 _HizAtlasMipScaleOffset[16];
 
 
-// 与原版一致的 NDC 转换逻辑
 float3 TransformWorldToNDC(float3 worldPos)
 {
-    float4 ndc = mul(_HizCullVP, float4(worldPos, 1));
-    ndc.xyz /= ndc.w;                       
-    
-    #ifdef UNITY_REVERSED_Z
-    ndc.xy = ndc.xy * 0.5f + 0.5f - 5.9604652e-08;          
-    #else
-    ndc.xyz = ndc.xyz * 0.5f + 0.5f - 5.9604652e-08;         
+    float4 clipPos = mul(_HizCullVP, float4(worldPos, 1.0));
+    float3 ndc = clipPos.xyz / clipPos.w;
+
+    // 映射 XY 到 [0, 1]
+    ndc.xy = ndc.xy * 0.5f + 0.5f;
+
+    // --- GLES 修正点 1: 移除手动 Y 翻转 ---
+    // 在 Compute Shader 处理渲染纹理时，GLES 通常不需要 1.0 - y
+    #if UNITY_UV_STARTS_AT_TOP
+    ndc.y = 1.0 - ndc.y; 
     #endif
     
-    ndc.y = 1.0 - ndc.y; // Unity 屏幕坐标反转Y
-    
+    //GLES: Z 是 [-1, 1]，转到 [0, 1]
+    #if !defined(UNITY_REVERSED_Z)
+    ndc.z = ndc.z * 0.5f + 0.5f;
+    #endif
+
+    // 转化为线性深度 [0, 1]
     ndc.z = Linear01Depth(ndc.z, _ZBufferParams);
     
     return ndc.xyz;
@@ -41,91 +46,77 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     if (index >= _CullableCount) return;
     float3 center = _AABBCenterBuffer[index].xyz;
     float3 extent = _AABBExtentBuffer[index].xyz;
-
-    bool isVisible = true;
+    
 
     // ==========================================
     // 阶段 1：视锥剔除 (Frustum Culling)
     // ==========================================
+    [unroll]
     for (int p = 0; p < 6; p++)
     {
         float4 plane = _FrustumPlanes[p];
-        float3 absNormal = abs(plane.xyz);
-        
-        // 计算AABB在法线方向上的投影半径
-        float r = dot(absNormal, extent);
-        // 计算中心点到平面的距离
+        float r = dot(abs(plane.xyz), extent);
         float d = dot(plane.xyz, center) + plane.w;
-        
-        // 如果中心点到平面的距离 < -半径，说明完全在平面外部
         if (d + r < 0)
         {
-            isVisible = false;
-            break;
+            _CullResultBuffer[index] = 1;
+            return;
         }
     }
 
     // ==========================================
     // 阶段 2：遮挡剔除 (Hi-Z Culling)
     // ==========================================
-    if (isVisible)
-    {
-        float3 aabbMaxW = center + extent;
-        float3 aabbMinW = center - extent;
+    float3 aabbMaxW = center + extent;
+    float3 aabbMinW = center - extent;
 
-        // 计算 8 个顶点的 NDC
-        float3 p0 = TransformWorldToNDC(float3(aabbMinW.x, aabbMinW.y, aabbMinW.z));
-        float3 p1 = TransformWorldToNDC(float3(aabbMinW.x, aabbMinW.y, aabbMaxW.z));
-        float3 p2 = TransformWorldToNDC(float3(aabbMinW.x, aabbMaxW.y, aabbMinW.z));
-        float3 p3 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMinW.y, aabbMinW.z));
-        float3 p4 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMaxW.y, aabbMinW.z));
-        float3 p5 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMinW.y, aabbMaxW.z));
-        float3 p6 = TransformWorldToNDC(float3(aabbMinW.x, aabbMaxW.y, aabbMaxW.z));
-        float3 p7 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMaxW.y, aabbMaxW.z));
+    // 计算 8 个顶点的 NDC
+    float3 p0 = TransformWorldToNDC(float3(aabbMinW.x, aabbMinW.y, aabbMinW.z));
+    float3 p1 = TransformWorldToNDC(float3(aabbMinW.x, aabbMinW.y, aabbMaxW.z));
+    float3 p2 = TransformWorldToNDC(float3(aabbMinW.x, aabbMaxW.y, aabbMinW.z));
+    float3 p3 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMinW.y, aabbMinW.z));
+    float3 p4 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMaxW.y, aabbMinW.z));
+    float3 p5 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMinW.y, aabbMaxW.z));
+    float3 p6 = TransformWorldToNDC(float3(aabbMinW.x, aabbMaxW.y, aabbMaxW.z));
+    float3 p7 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMaxW.y, aabbMaxW.z));
 
-        float3 ndcMin = min(min(min(p0, p1), min(p2, p3)), min(min(p4, p5), min(p6, p7)));
-        float3 ndcMax = max(max(max(p0, p1), max(p2, p3)), max(max(p4, p5), max(p6, p7)));
+    float3 ndcMin = min(min(min(p0, p1), min(p2, p3)), min(min(p4, p5), min(p6, p7)));
+    float3 ndcMax = max(max(max(p0, p1), max(p2, p3)), max(max(p4, p5), max(p6, p7)));
 
-        // 视锥近平面裁剪例外（如果在相机背后/穿过近平面，直接放行）
-        float4 clipPos = mul(_HizCullVP, float4(center - extent, 1.0));
-        if (clipPos.w <= _ProjectionParams.y) {
-            _CullResultBuffer[index] = 0; // 可见
-            return;
-        }
-
-        float2 screenAABBSize = floor((ndcMax.xy - ndcMin.xy) * _HizMinMaxMipAndScreenSize.zw);
-        float screenAABBRadius = max(screenAABBSize.x, screenAABBSize.y);
-        
-        int mipLevel = ceil(log2(screenAABBRadius));
-        mipLevel = clamp(mipLevel, _HizMinMaxMipAndScreenSize.y, _HizMinMaxMipAndScreenSize.x);
-        
-        float4 atlasPixelOffsetSize = _HizAtlasMipScaleOffset[mipLevel];
-        
-        ndcMax = clamp(ndcMax, 0.0, 1.0);
-        ndcMin = clamp(ndcMin, 0.0, 1.0);
-
-        int4 screenPixelMinMax = (float4(ndcMin.xy, ndcMax.xy) * atlasPixelOffsetSize.xyxy + atlasPixelOffsetSize.zwzw);
-        int2 minBoundary = (int2)atlasPixelOffsetSize.zw;
-        int2 maxBoundary = (int2)(atlasPixelOffsetSize.zw + atlasPixelOffsetSize.xy - 1.0);
-
-        screenPixelMinMax.xy = clamp(screenPixelMinMax.xy, minBoundary, maxBoundary);
-        screenPixelMinMax.zw = clamp(screenPixelMinMax.zw, minBoundary, maxBoundary);
-
-        // 采样图集 (Load 指令相当于 texelFetch / LOAD_TEXTURE2D_LOD)
-        float lbDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.xy, 0)).r;
-        float rbDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.zy, 0)).r;
-        float ltDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.xw, 0)).r;
-        float rtDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.zw, 0)).r;
-
-        // 【注意】：此处保持你的原逻辑，判断 maxDepth 还是 minDepth 取决于你的图形 API 和深度方向
-        float maxDepth = max(max(max(lbDepth, rbDepth), ltDepth), rtDepth);
-        
-        if (maxDepth < ndcMin.z)
-        {
-            isVisible = false;
-        }
+    // 视锥近平面裁剪例外（如果在相机背后/穿过近平面，直接放行）
+    float4 clipPos = mul(_HizCullVP, float4(center - extent, 1.0));
+    if (clipPos.w <= _ProjectionParams.y) {
+        _CullResultBuffer[index] = 0; // 可见
+        return;
     }
 
-    // 0 = 可见，1 = 被剔除
-    _CullResultBuffer[index] = isVisible ? 0 : 1;
+    float2 screenAABBSize = floor((ndcMax.xy - ndcMin.xy) * _HizMinMaxMipAndScreenSize.zw);
+    float screenAABBRadius = max(screenAABBSize.x, screenAABBSize.y);
+    
+    int mipLevel = ceil(log2(screenAABBRadius));
+    mipLevel = clamp(mipLevel, _HizMinMaxMipAndScreenSize.y, _HizMinMaxMipAndScreenSize.x);
+    
+    float4 atlasPixelOffsetSize = _HizAtlasMipScaleOffset[mipLevel];
+    
+    ndcMax = clamp(ndcMax, 0.0, 1.0);
+    ndcMin = clamp(ndcMin, 0.0, 1.0);
+
+    int4 screenPixelMinMax = (float4(ndcMin.xy, ndcMax.xy) * atlasPixelOffsetSize.xyxy + atlasPixelOffsetSize.zwzw);
+    int2 minBoundary = (int2)atlasPixelOffsetSize.zw;
+    int2 maxBoundary = (int2)(atlasPixelOffsetSize.zw + atlasPixelOffsetSize.xy - 1.0);
+
+    screenPixelMinMax.xy = clamp(screenPixelMinMax.xy, minBoundary, maxBoundary);
+    screenPixelMinMax.zw = clamp(screenPixelMinMax.zw, minBoundary, maxBoundary);
+
+    // 采样图集 (Load 指令相当于 texelFetch / LOAD_TEXTURE2D_LOD)
+    float lbDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.xy, 0)).r;
+    float rbDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.zy, 0)).r;
+    float ltDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.xw, 0)).r;
+    float rtDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.zw, 0)).r;
+
+    
+    float maxDepth = max(max(max(lbDepth, rbDepth), ltDepth), rtDepth);
+    
+    // 如果物体最接近相机的点(ndcMin.z) 比 场景遮挡物的最远点(maxDepth) 还要远，则剔除
+    _CullResultBuffer[index] = (maxDepth < ndcMin.z) ? 1 : 0;
 }

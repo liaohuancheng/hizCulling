@@ -1,40 +1,55 @@
 #pragma kernel CSMain
 
-Texture2D<float> _SourceTex;
-RWTexture2D<float> _HizMipAtlas;
+Texture2D<float> _SourceTex;            // 原始线性深度图
+RWTexture2D<float> _HizMipAtlas;       // 全局图集
 
-float4 _DstOffset; // xy: 写入到图集的像素偏移
-float4 _DstSize;   // xy: 当前 Mip 的尺寸
-float4 _SrcSize;   // xy: 源图像尺寸, zw: 源图像尺寸 - 1 (用于越界限制)
-float4 _Scale;     // xy: 缩放比 (SrcSize / DstSize)
+bool _IsFirstMip;      // C# 传入：当前是否在处理第一级
+float4 _SrcOffset;     // xy: 上一级 Mip 在图集中的像素偏移
+float4 _DstOffset;     // xy: 当前层级要写入图集的像素偏移
+float4 _DstSize;       // xy: 当前层级的分辨率 (w, h)
+float4 _SrcSize;       // xy: 源图像分辨率, zw: 源图像分辨率 - 1
+float4 _Scale;         // xy: 缩放比
 
 [numthreads(8, 8, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
-    // 防止线程组越界
+    // --- 严格边界检查：防止非 8 倍数分辨率下的写越界乱码 ---
     if (id.x >= (uint)_DstSize.x || id.y >= (uint)_DstSize.y)
         return;
 
-    // 映射到源纹理的起始坐标
+    // 映射到源图像坐标
     int2 texCoordinate00 = (int2)(id.xy * _Scale.xy);
     int2 maxTexCoordinate = (int2)_SrcSize.zw;
 
-    // 获取 2x2 的采样点，并限制在最大范围内
     int2 p00 = texCoordinate00;
     int2 p10 = min(texCoordinate00 + int2(1, 0), maxTexCoordinate);
     int2 p01 = min(texCoordinate00 + int2(0, 1), maxTexCoordinate);
     int2 p11 = min(texCoordinate00 + int2(1, 1), maxTexCoordinate);
 
-    // 采样源贴图（无论是基础线性深度图还是上一级的缓存图）
-    float d00 = _SourceTex[p00];
-    float d10 = _SourceTex[p10];
-    float d01 = _SourceTex[p01];
-    float d11 = _SourceTex[p11];
+    float d00, d10, d01, d11;
 
-    // 获取深度的最大值（保留了你原本取 MAX 的剔除逻辑）
+    if (_IsFirstMip)
+    {
+        // 第一级：直接从 LinearDepth 贴图读取
+        d00 = _SourceTex[p00];
+        d10 = _SourceTex[p10];
+        d01 = _SourceTex[p01];
+        d11 = _SourceTex[p11];
+    }
+    else
+    {
+        // 后续级：从图集中已经写好的上一级区域读取
+        // offset 是上一级在图集里的起始像素坐标
+        int2 offset = (int2)_SrcOffset.xy;
+        d00 = _HizMipAtlas[p00 + offset];
+        d10 = _HizMipAtlas[p10 + offset];
+        d01 = _HizMipAtlas[p01 + offset];
+        d11 = _HizMipAtlas[p11 + offset];
+    }
+
     float maxDepth = max(max(d00, d10), max(d01, d11));
 
-    // 计算当前在图集中的写入位置，并写入数据
+    // 写入当前层级在图集中的目标位置
     int2 dstPos = id.xy + (int2)_DstOffset.xy;
     _HizMipAtlas[dstPos] = maxDepth;
 }

@@ -58,13 +58,6 @@ public class HizDebugController : MonoBehaviour
             ClearTestCubes();
         }
         
-        y += buttonSize.y + spacing;
-        GUI.backgroundColor = Color.white;
-        var text = HizCullingMgr.Instance.getR8() ? "关闭R8" : "开启R8";
-        if (GUI.Button(new Rect(x, y, buttonSize.x, buttonSize.y), text, btnStyle))
-        {
-            HizCullingMgr.Instance.SetR8();
-        }
 
         // 状态显示
         y += buttonSize.y + spacing;
