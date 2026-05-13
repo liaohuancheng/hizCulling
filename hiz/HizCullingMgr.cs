@@ -16,7 +16,6 @@ public class HizCullingMgr {
     // [新增] 全局主机端 Master 数据池
     public Vector4[] MasterAABBCenters;
     public Vector4[] MasterAABBExtents;
-    public int ActiveCullableCount => m_HizCullableList.Count;
 
     private List<IHizCullable> m_HizCullableList;
     private HashSet<IHizCullable> m_DirtySet; // [新增] 脏列表
@@ -42,18 +41,7 @@ public class HizCullingMgr {
             setting = value;
         }
     }
-
-    public void SetR8()
-    {
-        for (int i = 0; i < m_HizInfoBuffer.Count; i++) {
-            var temp = m_HizInfoBuffer[i];
-            temp.UseR8Format = !temp.UseR8Format;
-        }
-    }
-    public bool getR8()
-    {
-        return m_HizInfoBuffer[0].UseR8Format;
-    }
+    
     public HizCullingInfo GetHizInfo(out bool isWating) {
         isWating = true;
         for (int i = 0; i < m_HizInfoBuffer.Count; i++) {
@@ -140,7 +128,6 @@ public class HizCullingMgr {
         } 
     }
     private int m_CurrentCheckIndex = 0;
-    private const int CHECKS_PER_FRAME = 500; // 每帧只查500个
     
     
     public void Update() {
@@ -191,15 +178,6 @@ public class HizCullingMgr {
         
     }
     
-    private Plane[] m_FrustumPlanes = new Plane[6];
-    private void PreFilterCullable() {
-        m_HizCullableList.Clear();
-        // 1. 缓存相机属性，避免在循环中重复访问属性
-        var camTransform = m_Camera.transform;
-        Vector3 camPos = camTransform.position;
-        var cameraForward = m_Camera.transform.forward;
-        GeometryUtility.CalculateFrustumPlanes(m_Camera, m_FrustumPlanes);
-    }
     private void UpdateBoundsData() {
         
         var hizInfo = GetHizInfo(out var isWating);
@@ -262,14 +240,10 @@ public class HizCullingInfo {
     public Vector2Int MipAtlasResolution;
     //当前屏幕视口的分辨率
     public Vector2Int ScreenResolution;
-    //回读GPU数据,Native 内存需要手动释放
-    public RenderTexture HizCullResultRT;
     // public NativeArray<float> HizCullResultArray;
     //剔除列表
     public int HizCullableCount;
     public IHizCullable[] HizCullableArray;
-    public Vector4[] HizCullAABBCenter;
-    public Vector4[] HizCullAABBExtent;
     public Vector4[] HizMipScaleOffset;
     public Vector2Int[] HizMipResolutions;
     public int AABBRtSize;
@@ -278,9 +252,6 @@ public class HizCullingInfo {
     public bool IsWating;
     public Material HizMat;
     public Action<AsyncGPUReadbackRequest> AsyncReadBackResult;
-    public bool UseR8Format = false; // 是否使用 R8
-    public NativeArray<byte> HizCullResultArray_R8;
-    public RenderTexture HizCullResultRTR8;
     // 在 HizCullingInfo 类的变量声明处新增:
     public Vector4[] FrustumPlanes = new Vector4[6]; // [新增] 保存视锥平面
     
@@ -310,15 +281,7 @@ public class HizCullingInfo {
         
         // 申请原生内存接收回读
         HizCullResultArray = new NativeArray<uint>(totalCount, Allocator.Persistent);
-        
-        HizCullResultRT = new RenderTexture(AABBRtSize, AABBRtSize, 0,RenderTextureFormat.RFloat,0) {
-            filterMode = FilterMode.Point,
-            wrapMode = TextureWrapMode.Clamp
-        };
-        HizCullResultRTR8 = new RenderTexture(AABBRtSize, AABBRtSize, 0,RenderTextureFormat.R8,0) {
-            filterMode = FilterMode.Point,
-            wrapMode = TextureWrapMode.Clamp
-        };
+
         AsyncReadBackResult = AsyncReadBackCullResult;
     }
   
@@ -375,9 +338,6 @@ public class HizCullingInfo {
     //清空数据
     public void Dispose() {
         HizCullResultArray.Dispose();
-        HizCullResultArray_R8.Dispose();
-        HizCullResultRT.Release();
-        HizCullResultRTR8.Release();
         AABBCenterBuffer?.Release();
         AABBExtentBuffer?.Release();
         HizCullResultBuffer?.Release();
@@ -402,27 +362,9 @@ public class HizCullingInfo {
 //着色器静态属性
 public class HizShaderProperty {
     public static int TextureLinearDepth = Shader.PropertyToID("_LinearDepthRT");
-    public static int TextureHizMipAtlas = Shader.PropertyToID("_HizMipAtlas");
-    public static int TextureHizAABBCenter = Shader.PropertyToID("_HizAABBCenterRT");
-    public static int TextureHizAABBExtent = Shader.PropertyToID("_HizAABBExtentRT");
     public static int Matrix4x4HizCullVP = Shader.PropertyToID("_HizCullVP");
     public static int VectorMinMaxMipAndScreenSize = Shader.PropertyToID("_HizMinMaxMipAndScreenSize");
-    public static int VectorDownSampleTextrueSize = Shader.PropertyToID("_HizDownSampleTextureSize");
     public static int VectorArrayMipScaleOffset = Shader.PropertyToID("_HizAtlasMipScaleOffset");
-    public static int FloatHizAABBRtSize = Shader.PropertyToID("_HizAABBRtSize");
-    public static int BufferHizAABBData = Shader.PropertyToID("_HizAABBBuffer");
-    public static int[] TextureHizMips = new int[10]{
-        Shader.PropertyToID("_HizMip_0"),
-        Shader.PropertyToID("_HizMip_1"),
-        Shader.PropertyToID("_HizMip_2"),
-        Shader.PropertyToID("_HizMip_3"),
-        Shader.PropertyToID("_HizMip_4"),
-        Shader.PropertyToID("_HizMip_5"),
-        Shader.PropertyToID("_HizMip_6"),
-        Shader.PropertyToID("_HizMip_7"),
-        Shader.PropertyToID("_HizMip_8"),
-        Shader.PropertyToID("_HizMip_9"),
-    };
 }
 public enum HizAABBRtSize {
     x16 = 16,

@@ -1,22 +1,22 @@
-using System.Collections;
-using System.Collections.Generic;
-using Unity.Collections;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 
 //运行时 遮挡剔除 ， 动态物体和静态物体
 public class HizCullingRenderFeature : ScriptableRendererFeature {
+    // 公开这个属性，让 Pass 随时能拿到最新的 Handle
+    public RTHandle HizMipAtlasHandle; 
+    
     private LinearDepthCopyPass m_LinearDepthCopyPass;
     private HizMipGenerateRenderPass m_HizMipGeneratePass;
     private HizCullingRenderPass m_HizCullingPass;
     public override void Create() {
-        m_HizMipGeneratePass = new HizMipGenerateRenderPass();
-        m_HizCullingPass = new HizCullingRenderPass();
+        m_HizMipGeneratePass = new HizMipGenerateRenderPass(this);
+        m_HizCullingPass = new HizCullingRenderPass(this);
         m_LinearDepthCopyPass = new LinearDepthCopyPass();
     }
     protected override void Dispose(bool disposing) {
+        RTHandles.Release(HizMipAtlasHandle);
         m_HizCullingPass.Dispose();
     }
     public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData) {
@@ -63,6 +63,7 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
     //生成 HizMipAtlas
     private class HizMipGenerateRenderPass : ScriptableRenderPass {
         // 缓存 ID
+        private HizCullingRenderFeature m_Parent;
         private int m_DstOffsetId = Shader.PropertyToID("_DstOffset");
         private int m_DstSizeId = Shader.PropertyToID("_DstSize");
         private int m_SrcSizeId = Shader.PropertyToID("_SrcSize");
@@ -70,7 +71,8 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
         private int m_IsFirstMipId = Shader.PropertyToID("_IsFirstMip");
         private int m_SrcOffsetId = Shader.PropertyToID("_SrcOffset");
 
-        public HizMipGenerateRenderPass() {
+        public HizMipGenerateRenderPass(HizCullingRenderFeature parent) {
+            m_Parent = parent;
             renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
         }
         
@@ -86,15 +88,37 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             var cmd = CommandBufferPool.Get("HizMipGenerateCS");
             cmd.BeginSample("HizMipGenerateCS");
 
-            // 1. 申请图集 RT (确保 enableRandomWrite = true)
-            cmd.GetTemporaryRT(HizShaderProperty.TextureHizMipAtlas, hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, 0, FilterMode.Point, RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear, 1, true);
-            
+            // 1. 检查并分配 RTHandle (持久化存储在 Parent Feature 中)
+            if (m_Parent.HizMipAtlasHandle == null || 
+                m_Parent.HizMipAtlasHandle.rt.width != hizInfo.MipAtlasResolution.x || 
+                m_Parent.HizMipAtlasHandle.rt.height != hizInfo.MipAtlasResolution.y)
+            {
+                RTHandles.Release(m_Parent.HizMipAtlasHandle);
+                
+                RenderTextureDescriptor desc = new RenderTextureDescriptor(hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, RenderTextureFormat.RFloat, 0);
+                desc.enableRandomWrite = true; // 开启 UAV 必须项
+                desc.sRGB = false;
+                desc.msaaSamples = 1;
+                
+                m_Parent.HizMipAtlasHandle = RTHandles.Alloc(
+                    hizInfo.MipAtlasResolution.x, 
+                    hizInfo.MipAtlasResolution.y, 
+                    colorFormat: UnityEngine.Experimental.Rendering.GraphicsFormat.R32_SFloat, // 对应 RFloat
+                    dimension: TextureDimension.Tex2D,
+                    useMipMap: false,
+                    autoGenerateMips: false,
+                    enableRandomWrite:true,
+                    filterMode: FilterMode.Point,
+                    wrapMode: TextureWrapMode.Clamp,
+                    name: "_HizMipAtlas"
+                );
+            }
             // 这一步解决了从 GetTemporaryRT 获取到“脏显存”导致随机红点的问题
-            cmd.SetRenderTarget(HizShaderProperty.TextureHizMipAtlas, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            cmd.SetRenderTarget(m_Parent.HizMipAtlasHandle, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
             cmd.ClearRenderTarget(false, true, Color.black); 
             // ---------------------------------------
             // 2. 绑定全局资源
-            cmd.SetComputeTextureParam(mipCS, kernel, "_HizMipAtlas", HizShaderProperty.TextureHizMipAtlas);
+            cmd.SetComputeTextureParam(mipCS, kernel, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
             cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", HizShaderProperty.TextureLinearDepth);
 
             var mipCount = hizInfo.MinMipLevel + 1;
@@ -140,15 +164,13 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
 
     //遮挡剔除计算，请求回读数据
     private class HizCullingRenderPass : ScriptableRenderPass {
-        private Material m_HizMat;
-        private ComputeBuffer m_AABBCenterBuffer;
-        private ComputeBuffer m_AABBExtentBuffer;
-        public HizCullingRenderPass() {
+        private HizCullingRenderFeature m_Parent;
+        public HizCullingRenderPass(HizCullingRenderFeature parent) {
+            m_Parent = parent;
             renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
         }
         public void Dispose() {
-            m_AABBCenterBuffer?.Dispose();
-            m_AABBExtentBuffer?.Dispose();
+            
         }
         private MaterialPropertyBlock m_PropBlock; // 定义成员变量
         
@@ -173,7 +195,7 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             cmd.SetComputeBufferParam(cullCS, kernel, "_AABBCenterBuffer", hizInfo.AABBCenterBuffer);
             cmd.SetComputeBufferParam(cullCS, kernel, "_AABBExtentBuffer", hizInfo.AABBExtentBuffer);
             cmd.SetComputeBufferParam(cullCS, kernel, "_CullResultBuffer", hizInfo.HizCullResultBuffer);
-            cmd.SetComputeTextureParam(cullCS, kernel, "_HizMipAtlas", HizShaderProperty.TextureHizMipAtlas);
+            cmd.SetComputeTextureParam(cullCS, kernel, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
             
             // [新增] 传入视锥平面数据进行预剔除
             cmd.SetComputeVectorArrayParam(cullCS, "_FrustumPlanes", hizInfo.FrustumPlanes);

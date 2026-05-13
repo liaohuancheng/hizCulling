@@ -12,7 +12,7 @@ public class HizCullingSetting : ScriptableObject {
     public ComputeShader HizCullCS;
     [Header("最大Mip等级,0 为原始分辨率的2次幂，递增2次幂降采样，默认为 1")]
     public int MaxMipLevel = 1;
-    [FormerlySerializedAs("MinMipReslutionSize")] [Header("最小Mip分辨率大小，减少降采样次数，默认为 4")]
+    [FormerlySerializedAs("MinMipReslutionSize")] [Header("最小Mip分辨率大小，减少降采样次数，默认为 2, 太大会导致小物体采样结果有精度误差")]
     public int MinMipResolutionSize = 4;
     [Header("Info缓存,手机上回读会有延迟，所以需要缓冲，默认为 3")]
     public int HizInfoBufferCount = 3;
