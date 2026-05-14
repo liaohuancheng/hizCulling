@@ -173,50 +173,77 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             
         }
         private MaterialPropertyBlock m_PropBlock; // 定义成员变量
-        
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
             if (renderingData.cameraData.cameraType != CameraType.Game) return;
 
-            var hizInfo = HizCullingMgr.Instance.GetHizInfo(out _);
-            if (hizInfo.HizCullableCount == 0) return; // 如果没有物体需要剔除，直接跳过
+            var mgr = HizCullingMgr.Instance;
+            var hizInfo = mgr.GetHizInfo(out _);
+            if (hizInfo == null) return;
 
-            // 你需要在 Setting 里配置这个 Compute Shader
-            var cullCS = HizCullingMgr.Instance.Setting.HizCullCS; 
-            int kernel = cullCS.FindKernel("CSMain");
+            var cullCS = mgr.Setting.HizCullCS;
+            var cmd = CommandBufferPool.Get("HizCulling_Combined");
 
-            var cmd = CommandBufferPool.Get("HizCullingCS");
-            cmd.BeginSample("CullCS");
-
-            // 虽然每帧全量 SetData，但只上传 activeCount 的长度，非常快
-            cmd.SetBufferData(hizInfo.AABBCenterBuffer, HizCullingMgr.Instance.MasterAABBCenters, 0, 0, hizInfo.HizCullableCount);
-            cmd.SetBufferData(hizInfo.AABBExtentBuffer, HizCullingMgr.Instance.MasterAABBExtents, 0, 0, hizInfo.HizCullableCount);
-
-            // 2. 绑定参数到 Compute Shader
-            cmd.SetComputeBufferParam(cullCS, kernel, "_AABBCenterBuffer", hizInfo.AABBCenterBuffer);
-            cmd.SetComputeBufferParam(cullCS, kernel, "_AABBExtentBuffer", hizInfo.AABBExtentBuffer);
-            cmd.SetComputeBufferParam(cullCS, kernel, "_CullResultBuffer", hizInfo.HizCullResultBuffer);
-            cmd.SetComputeTextureParam(cullCS, kernel, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
-            
-            // [新增] 传入视锥平面数据进行预剔除
-            cmd.SetComputeVectorArrayParam(cullCS, "_FrustumPlanes", hizInfo.FrustumPlanes);
-            // 矩阵与摄像机参数
+            // --- 0. 公共参数设置 ---
             var vp = renderingData.cameraData.GetGPUProjectionMatrix() * renderingData.cameraData.GetViewMatrix();
-            cmd.SetComputeMatrixParam(cullCS, HizShaderProperty.Matrix4x4HizCullVP, vp);
-            cmd.SetComputeVectorParam(cullCS, HizShaderProperty.VectorMinMaxMipAndScreenSize, new Vector4(hizInfo.MinMipLevel, hizInfo.MaxMipLevel, hizInfo.ScreenResolution.x, hizInfo.ScreenResolution.y));
-            cmd.SetComputeVectorArrayParam(cullCS, HizShaderProperty.VectorArrayMipScaleOffset, hizInfo.HizMipScaleOffset);
-            cmd.SetComputeIntParam(cullCS, "_CullableCount", hizInfo.HizCullableCount); // 传实际物体数量
-
-            // 3. 派发线程，每 64 个物体为一个线程组
-            int threadGroups = Mathf.CeilToInt((float)hizInfo.HizCullableCount / 64f);
-            cmd.DispatchCompute(cullCS, kernel, threadGroups, 1, 1);
-
-            // 4. 发起异步回读，直接回读 Buffer 而不是 RenderTexture
-            cmd.RequestAsyncReadback(hizInfo.HizCullResultBuffer, hizInfo.AsyncReadBackResult);
+            cmd.SetComputeMatrixParam(cullCS, "_HizCullVP", vp);
             
-            hizInfo.IsWating = true;
-            hizInfo.RequesetFrameCount = Time.frameCount;
+            cmd.SetComputeVectorParam(cullCS, "_HizMinMaxMipAndScreenSize", new Vector4(hizInfo.MaxMipLevel, hizInfo.MinMipLevel, hizInfo.ScreenResolution.x, hizInfo.ScreenResolution.y));
+            cmd.SetComputeVectorArrayParam(cullCS, "_HizAtlasMipScaleOffset", hizInfo.HizMipScaleOffset);
+            cmd.SetComputeVectorArrayParam(cullCS, "_FrustumPlanes", hizInfo.FrustumPlanes);
 
-            cmd.EndSample("CullCS");
+            // ========================================================
+            // --- 1. Standard 剔除 (CPU 回读模式) ---
+            // ========================================================
+            if (hizInfo.HizCullableCount > 0) {
+                int kernelStd = cullCS.FindKernel("CSMain_Standard");
+                cmd.SetComputeTextureParam(cullCS, kernelStd, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
+                // 上传 AABB 数据
+                cmd.SetBufferData(hizInfo.AABBCenterBuffer, mgr.MasterAABBCenters, 0, 0, hizInfo.HizCullableCount);
+                cmd.SetBufferData(hizInfo.AABBExtentBuffer, mgr.MasterAABBExtents, 0, 0, hizInfo.HizCullableCount);
+
+                cmd.SetComputeBufferParam(cullCS, kernelStd, "_AABBCenterBuffer", hizInfo.AABBCenterBuffer);
+                cmd.SetComputeBufferParam(cullCS, kernelStd, "_AABBExtentBuffer", hizInfo.AABBExtentBuffer);
+                cmd.SetComputeBufferParam(cullCS, kernelStd, "_CullResultBuffer", hizInfo.HizCullResultBuffer);
+                cmd.SetComputeIntParam(cullCS, "_CullableCount", hizInfo.HizCullableCount);
+
+                int groupsStd = Mathf.CeilToInt(hizInfo.HizCullableCount / 64f);
+                cmd.DispatchCompute(cullCS, kernelStd, groupsStd, 1, 1);
+
+                // 发起异步回读
+                cmd.RequestAsyncReadback(hizInfo.HizCullResultBuffer, hizInfo.AsyncReadBackResult);
+                hizInfo.IsWating = true;
+            }
+
+            // ========================================================
+            // --- 2. Instance 剔除 (GPU 驱动模式) ---
+            // ========================================================
+            var batch = mgr.GetInstanceBatches(); // 假设 Mgr 里维护了 Batch 列表
+            if (batch != null) {
+                int kernelInst = cullCS.FindKernel("CSMain_Instance");
+                // A. 重置 AppendBuffer 计数器
+                cmd.SetBufferCounterValue(batch.visibleIndexBuffer, 0);
+                cmd.SetComputeTextureParam(cullCS, kernelInst, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
+                // B. 设置 Batch 专用参数并 Dispatch
+                cmd.SetComputeBufferParam(cullCS, kernelInst, "_InstanceMatrixBuffer", batch.instanceDataBuffer);
+                cmd.SetComputeBufferParam(cullCS, kernelInst, "_VisibleInstanceIndexBuffer", batch.visibleIndexBuffer);
+                cmd.SetComputeIntParam(cullCS, "_InstanceCount", batch.totalCount);
+                cmd.SetComputeVectorParam(cullCS, "_LocalAABBExtent", batch.mesh.bounds.extents);
+
+                int groupsInst = Mathf.CeilToInt(batch.totalCount / 64f);
+                cmd.DispatchCompute(cullCS, kernelInst, groupsInst, 1, 1);
+
+                // C. 将 AppendBuffer 的 Count 拷贝到 ArgsBuffer 的第 2 个 uint (instanceCount)
+                // 注意：ArgsBuffer 的布局是 [indexCount, instanceCount, startIndex, baseVertex, startInstance]
+                cmd.CopyCounterValue(batch.visibleIndexBuffer, batch.argsBuffer, 4);
+                
+                
+                // D. 立即绘制 (此时 GPU 已经知道了 instanceCount)
+                // 确保 Material 已经设置了对应的 Buffer
+                batch.material.SetBuffer("_VisibleIndexBuffer", batch.visibleIndexBuffer);
+                batch.material.SetBuffer("_InstanceMatrixBuffer", batch.instanceDataBuffer);
+                cmd.DrawMeshInstancedIndirect(batch.mesh, 0, batch.material, 0, batch.argsBuffer);
+            }
+
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }

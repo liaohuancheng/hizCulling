@@ -224,7 +224,18 @@ public class HizCullingMgr {
     }
 #endif
 
+    public void CreateTestBatch(Mesh Mesh, Material material, Matrix4x4[] matrices)
+    {
+        test = new HizInstanceBatch(Mesh, material, matrices);
+    }
+    
+    public HizInstanceBatch test;
+    public HizInstanceBatch GetInstanceBatches()
+    {
+        return test;
+    }
 }
+
 //单帧遮挡剔除数据
 public class HizCullingInfo {
 

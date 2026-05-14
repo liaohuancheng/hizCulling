@@ -1,5 +1,6 @@
-#pragma kernel CSMain
-
+#pragma enable_d3d11_debug_symbols
+#pragma kernel CSMain_Standard
+#pragma kernel CSMain_Instance
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
 Texture2D<float> _HizMipAtlas;
@@ -38,16 +39,8 @@ float3 TransformWorldToNDC(float3 worldPos)
     return ndc.xyz;
 }
 
-[numthreads(64, 1, 1)]
-void CSMain(uint3 id : SV_DispatchThreadID)
-{
-    uint index = id.x;
-    // 如果超出了实际要剔除的物体数量，直接返回
-    if (index >= _CullableCount) return;
-    float3 center = _AABBCenterBuffer[index].xyz;
-    float3 extent = _AABBExtentBuffer[index].xyz;
+bool CheckVisable(float3 center, float3 extent) {
     
-
     // ==========================================
     // 阶段 1：视锥剔除 (Frustum Culling)
     // ==========================================
@@ -59,8 +52,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         float d = dot(plane.xyz, center) + plane.w;
         if (d + r < 0)
         {
-            _CullResultBuffer[index] = 1;
-            return;
+            return false;
         }
     }
 
@@ -86,15 +78,14 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     // 视锥近平面裁剪例外（如果在相机背后/穿过近平面，直接放行）
     float4 clipPos = mul(_HizCullVP, float4(center - extent, 1.0));
     if (clipPos.w <= _ProjectionParams.y) {
-        _CullResultBuffer[index] = 0; // 可见
-        return;
+        return true;
     }
 
     float2 screenAABBSize = floor((ndcMax.xy - ndcMin.xy) * _HizMinMaxMipAndScreenSize.zw);
     float screenAABBRadius = max(screenAABBSize.x, screenAABBSize.y);
     
     int mipLevel = ceil(log2(screenAABBRadius));
-    mipLevel = clamp(mipLevel, _HizMinMaxMipAndScreenSize.y, _HizMinMaxMipAndScreenSize.x);
+    mipLevel = clamp(mipLevel, _HizMinMaxMipAndScreenSize.x, _HizMinMaxMipAndScreenSize.y);
     
     float4 atlasPixelOffsetSize = _HizAtlasMipScaleOffset[mipLevel];
     
@@ -113,10 +104,38 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float rbDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.zy, 0)).r;
     float ltDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.xw, 0)).r;
     float rtDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.zw, 0)).r;
-
-    
     float maxDepth = max(max(max(lbDepth, rbDepth), ltDepth), rtDepth);
     
-    // 如果物体最接近相机的点(ndcMin.z) 比 场景遮挡物的最远点(maxDepth) 还要远，则剔除
-    _CullResultBuffer[index] = (maxDepth < ndcMin.z) ? 1 : 0;
+    return maxDepth > ndcMin.z;
+}
+[numthreads(64, 1, 1)]
+void CSMain_Standard(uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    // 如果超出了实际要剔除的物体数量，直接返回
+    if (index >= _CullableCount) return;
+    float3 center = _AABBCenterBuffer[index].xyz;
+    float3 extent = _AABBExtentBuffer[index].xyz;
+    
+    _CullResultBuffer[index] = CheckVisable(center, extent) ? 0 : 1;
+}
+
+StructuredBuffer<float4x4> _InstanceMatrixBuffer;
+AppendStructuredBuffer<uint> _VisibleInstanceIndexBuffer;
+uint _InstanceCount;
+float3 _LocalAABBExtent;
+// 2. 处理 DrawMeshInstancedIndirect 物体
+[numthreads(64, 1, 1)]
+void CSMain_Instance(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _InstanceCount) return;
+
+    float4x4 mat = _InstanceMatrixBuffer[id.x];
+    float3 worldPos = float3(mat._m03, mat._m13, mat._m23);
+    
+    // 这里假设 Instance 的 AABB 是统一的，或者你可以从另一个 Buffer 读取每个实例的 Extent
+    if (CheckVisable(worldPos, _LocalAABBExtent))
+    {
+        _VisibleInstanceIndexBuffer.Append(id.x);
+    }
 }
