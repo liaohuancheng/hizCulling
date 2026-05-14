@@ -1,244 +1,247 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 
-//运行时 遮挡剔除 ， 动态物体和静态物体
 public class HizCullingRenderFeature : ScriptableRendererFeature {
-    // 公开这个属性，让 Pass 随时能拿到最新的 Handle
     public RTHandle HizMipAtlasHandle; 
     
     private LinearDepthCopyPass m_LinearDepthCopyPass;
     private HizMipGenerateRenderPass m_HizMipGeneratePass;
-    private HizCullingRenderPass m_HizCullingPass;
+    private HizCullingStandardPass m_CullingStandardPass;
+    private HizCullingInstancePass m_CullingInstancePass;
+    private HizDrawInstancePass m_DrawInstancePass;
+
     public override void Create() {
-        m_HizMipGeneratePass = new HizMipGenerateRenderPass(this);
-        m_HizCullingPass = new HizCullingRenderPass(this);
         m_LinearDepthCopyPass = new LinearDepthCopyPass();
+        m_HizMipGeneratePass = new HizMipGenerateRenderPass(this);
+        m_CullingStandardPass = new HizCullingStandardPass(this);
+        m_CullingInstancePass = new HizCullingInstancePass(this);
+        m_DrawInstancePass = new HizDrawInstancePass();
     }
+
     protected override void Dispose(bool disposing) {
         RTHandles.Release(HizMipAtlasHandle);
-        m_HizCullingPass.Dispose();
     }
+
     public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData) {
-        if (!HizCullingMgr.Instance.IsEnable) {
-            return;
+        if (!HizCullingMgr.Instance.IsEnable) return;
+        
+        var camType = renderingData.cameraData.cameraType;
+        bool isGameCam = camType == CameraType.Game;
+        bool isSceneCam = camType == CameraType.SceneView;
+        
+        // 仅仅允许 Game(主视野) 和 Scene(场景编辑) 相机进入
+        if (!isGameCam && !isSceneCam) return;
+        // 1. 获取全局上下文
+        var cameraContext = HizCullingMgr.Instance.GetCameraContext(renderingData.cameraData.camera, renderingData);
+        
+        // 2. 【核心修改】：剔除计算（生成深度图、ComputeShader调度）绝对只在 Game 相机执行一遍！
+        if (isGameCam) {
+            m_LinearDepthCopyPass.Prepare(cameraContext);
+            m_HizMipGeneratePass.Prepare(cameraContext);
+            renderer.EnqueuePass(m_LinearDepthCopyPass);
+            renderer.EnqueuePass(m_HizMipGeneratePass);
+
+            var rbBuffer = HizCullingMgr.Instance.GetAvailableReadbackBuffer();
+            if (rbBuffer != null) {
+                HizCullingMgr.Instance.FillReadbackSnapshot(rbBuffer);
+                if (rbBuffer.ActiveCount > 0) {
+                    m_CullingStandardPass.Prepare(cameraContext, rbBuffer);
+                    renderer.EnqueuePass(m_CullingStandardPass);
+                }
+                else {
+                    rbBuffer.IsWaiting = false; 
+                }
+            }
+
+            var batches = HizCullingMgr.Instance.GetInstanceBatches();
+            if (batches != null && batches.Count > 0) {
+                m_CullingInstancePass.Prepare(cameraContext, batches);
+                renderer.EnqueuePass(m_CullingInstancePass);
+            }
         }
-        var hizInfo = HizCullingMgr.Instance.GetHizInfo(out var isWating);
-        if (isWating) {
-            return;
-        }        
-        //先生成线性的深度图
-        renderer.EnqueuePass(m_LinearDepthCopyPass);
-        //再用线性深度图 做成Mip 图集
-        renderer.EnqueuePass(m_HizMipGeneratePass);
-        //开始遮挡剔除计算，计算的结果在回读的那一帧生效
-        renderer.EnqueuePass(m_HizCullingPass);
+
+        // 3. 绘制 Pass 允许 Game 和 Scene 相机都执行！
+        // 这样 Scene 窗口就能复用主相机刚才剔除后的 argsBuffer 结果，直接画出可见的实例
+        var drawBatches = HizCullingMgr.Instance.GetInstanceBatches();
+        if (drawBatches != null && drawBatches.Count > 0) {
+            m_DrawInstancePass.Prepare(drawBatches);
+            renderer.EnqueuePass(m_DrawInstancePass);
+        }
     }
-    //拷贝线性深度图
+
+    private static void SetupCommonParams(CommandBuffer cmd, ComputeShader cs, HizCameraContext cameraContext, RenderingData data) {
+        var vp = data.cameraData.GetGPUProjectionMatrix() * data.cameraData.GetViewMatrix();
+        cmd.SetComputeMatrixParam(cs, "_HizCullVP", vp);
+        // 注意顺序：x 是 MaxMip(0), y 是 MinMip(9)
+        cmd.SetComputeVectorParam(cs, "_HizMinMaxMipAndScreenSize", new Vector4(cameraContext.MaxMipLevel, cameraContext.MinMipLevel, cameraContext.ScreenResolution.x, cameraContext.ScreenResolution.y));
+        cmd.SetComputeVectorArrayParam(cs, "_HizAtlasMipScaleOffset", cameraContext.HizMipScaleOffset);
+        cmd.SetComputeVectorArrayParam(cs, "_FrustumPlanes", cameraContext.FrustumPlanes);
+    }
+
     private class LinearDepthCopyPass : ScriptableRenderPass {
-        private Material m_HizMat;
-        public LinearDepthCopyPass() {
-            renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
-        }
-        //拷贝一张线性深度图
+        private HizCameraContext m_Ctx;
+        public void Prepare(HizCameraContext ctx) { m_Ctx = ctx; }
+        public LinearDepthCopyPass() { renderPassEvent = RenderPassEvent.AfterRenderingOpaques; }
+
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
-            if (renderingData.cameraData.cameraType != CameraType.Game) {
-                return;
-            }
-            var hizInfo = HizCullingMgr.Instance.GetHizInfo(out _);
-            if (m_HizMat == null) {
-                m_HizMat = hizInfo.HizMat;
-            }
+            if (m_Ctx == null || m_Ctx.HizMat == null) return;
             var cmd = CommandBufferPool.Get("CopyLinearDepth");
-            cmd.GetTemporaryRT(HizShaderProperty.TextureLinearDepth,renderingData.cameraData.cameraTargetDescriptor.width,renderingData.cameraData.cameraTargetDescriptor.height,0, FilterMode.Point, RenderTextureFormat.RFloat);
-            cmd.SetRenderTarget(HizShaderProperty.TextureLinearDepth, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
-            cmd.SetViewProjectionMatrices(Matrix4x4.identity,Matrix4x4.identity);
+            cmd.GetTemporaryRT(Shader.PropertyToID("_LinearDepthRT"), renderingData.cameraData.cameraTargetDescriptor.width, renderingData.cameraData.cameraTargetDescriptor.height, 0, FilterMode.Point, RenderTextureFormat.RFloat);
+            cmd.SetRenderTarget(Shader.PropertyToID("_LinearDepthRT"), RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            cmd.SetViewProjectionMatrices(Matrix4x4.identity, Matrix4x4.identity);
             cmd.SetGlobalTexture("_SourceTex", renderingData.cameraData.renderer.cameraDepthTarget);
-            cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_HizMat, 0, 4);
-            cmd.SetViewProjectionMatrices(renderingData.cameraData.GetViewMatrix(),renderingData.cameraData.GetProjectionMatrix());
+            cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_Ctx.HizMat, 0, 4);
+            cmd.SetViewProjectionMatrices(renderingData.cameraData.GetViewMatrix(), renderingData.cameraData.GetProjectionMatrix());
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }
     }
-    //生成 HizMipAtlas
+
     private class HizMipGenerateRenderPass : ScriptableRenderPass {
-        // 缓存 ID
         private HizCullingRenderFeature m_Parent;
-        private int m_DstOffsetId = Shader.PropertyToID("_DstOffset");
-        private int m_DstSizeId = Shader.PropertyToID("_DstSize");
-        private int m_SrcSizeId = Shader.PropertyToID("_SrcSize");
-        private int m_ScaleId = Shader.PropertyToID("_Scale");
-        private int m_IsFirstMipId = Shader.PropertyToID("_IsFirstMip");
-        private int m_SrcOffsetId = Shader.PropertyToID("_SrcOffset");
+        private HizCameraContext m_Ctx;
+        public void Prepare(HizCameraContext ctx) { m_Ctx = ctx; }
+        public HizMipGenerateRenderPass(HizCullingRenderFeature parent) { m_Parent = parent; renderPassEvent = RenderPassEvent.AfterRenderingOpaques; }
 
-        public HizMipGenerateRenderPass(HizCullingRenderFeature parent) {
-            m_Parent = parent;
-            renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
-        }
-        
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
-            if (renderingData.cameraData.cameraType != CameraType.Game) return;
-
-            var hizInfo = HizCullingMgr.Instance.GetHizInfo(out _);
-            hizInfo.UpdateHizInfo(ref renderingData);
-
+            if (m_Ctx == null) return;
             var mipCS = HizCullingMgr.Instance.Setting.HizMipCS;
             int kernel = mipCS.FindKernel("CSMain");
-
             var cmd = CommandBufferPool.Get("HizMipGenerateCS");
-            cmd.BeginSample("HizMipGenerateCS");
 
-            // 1. 检查并分配 RTHandle (持久化存储在 Parent Feature 中)
-            if (m_Parent.HizMipAtlasHandle == null || 
-                m_Parent.HizMipAtlasHandle.rt.width != hizInfo.MipAtlasResolution.x || 
-                m_Parent.HizMipAtlasHandle.rt.height != hizInfo.MipAtlasResolution.y)
-            {
+            if (m_Parent.HizMipAtlasHandle == null || m_Parent.HizMipAtlasHandle.rt.width != m_Ctx.MipAtlasResolution.x || m_Parent.HizMipAtlasHandle.rt.height != m_Ctx.MipAtlasResolution.y) {
                 RTHandles.Release(m_Parent.HizMipAtlasHandle);
-                
-                RenderTextureDescriptor desc = new RenderTextureDescriptor(hizInfo.MipAtlasResolution.x, hizInfo.MipAtlasResolution.y, RenderTextureFormat.RFloat, 0);
-                desc.enableRandomWrite = true; // 开启 UAV 必须项
-                desc.sRGB = false;
-                desc.msaaSamples = 1;
-                
-                m_Parent.HizMipAtlasHandle = RTHandles.Alloc(
-                    hizInfo.MipAtlasResolution.x, 
-                    hizInfo.MipAtlasResolution.y, 
-                    colorFormat: UnityEngine.Experimental.Rendering.GraphicsFormat.R32_SFloat, // 对应 RFloat
-                    dimension: TextureDimension.Tex2D,
-                    useMipMap: false,
-                    autoGenerateMips: false,
-                    enableRandomWrite:true,
-                    filterMode: FilterMode.Point,
-                    wrapMode: TextureWrapMode.Clamp,
-                    name: "_HizMipAtlas"
-                );
+                m_Parent.HizMipAtlasHandle = RTHandles.Alloc(m_Ctx.MipAtlasResolution.x, m_Ctx.MipAtlasResolution.y, colorFormat: UnityEngine.Experimental.Rendering.GraphicsFormat.R32_SFloat, enableRandomWrite: true, filterMode: FilterMode.Point, name: "_HizMipAtlas");
             }
-            // 这一步解决了从 GetTemporaryRT 获取到“脏显存”导致随机红点的问题
+            
             cmd.SetRenderTarget(m_Parent.HizMipAtlasHandle, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
             cmd.ClearRenderTarget(false, true, Color.black); 
-            // ---------------------------------------
-            // 2. 绑定全局资源
             cmd.SetComputeTextureParam(mipCS, kernel, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
-            cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", HizShaderProperty.TextureLinearDepth);
+            cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", Shader.PropertyToID("_LinearDepthRT"));
 
-            var mipCount = hizInfo.MinMipLevel + 1;
-            var maxMipLevel = hizInfo.MaxMipLevel;
-
-            // 3. 逐级派发 Dispatch
-            for (int i = maxMipLevel; i < mipCount; i++) {
-                var mipSize = hizInfo.HizMipResolutions[i];         // 当前要生成的层级尺寸
-                var scaleOffset = hizInfo.HizMipScaleOffset[i];     // 当前要写入的目标偏移 (z,w)
+            for (int i = m_Ctx.MaxMipLevel; i < m_Ctx.MinMipLevel + 1; i++) {
+                var mipSize = m_Ctx.HizMipResolutions[i];
+                if (mipSize.x <= 0 || mipSize.y <= 0) continue; // 保护
                 
-                bool isFirst = (i == maxMipLevel);
-                // 源尺寸：如果是第一级，源是屏幕分辨率；否则源是上一级分辨率
-                var sourceMipSize = isFirst ? hizInfo.ScreenResolution : hizInfo.HizMipResolutions[i - 1];
+                var scaleOffset = m_Ctx.HizMipScaleOffset[i];
+                bool isFirst = (i == m_Ctx.MaxMipLevel);
+                var srcSize = isFirst ? m_Ctx.ScreenResolution : m_Ctx.HizMipResolutions[i - 1];
 
-                // 设置标志位
-                cmd.SetComputeIntParam(mipCS, m_IsFirstMipId, isFirst ? 1 : 0);
-
-                // 如果不是第一级，告诉 Shader 上一级在图集里的什么位置
+                cmd.SetComputeIntParam(mipCS, "_IsFirstMip", isFirst ? 1 : 0);
                 if (!isFirst) {
-                    var prevScaleOffset = hizInfo.HizMipScaleOffset[i - 1];
-                    cmd.SetComputeVectorParam(mipCS, m_SrcOffsetId, new Vector4(prevScaleOffset.z, prevScaleOffset.w, 0, 0));
+                    var prevOffset = m_Ctx.HizMipScaleOffset[i - 1];
+                    cmd.SetComputeVectorParam(mipCS, "_SrcOffset", new Vector4(prevOffset.z, prevOffset.w, 0, 0));
                 }
 
-                // 设置当前写入目标参数
-                cmd.SetComputeVectorParam(mipCS, m_DstOffsetId, new Vector4(scaleOffset.z, scaleOffset.w, 0, 0));
-                cmd.SetComputeVectorParam(mipCS, m_DstSizeId, new Vector4(mipSize.x, mipSize.y, 0, 0));
-                cmd.SetComputeVectorParam(mipCS, m_SrcSizeId, new Vector4(sourceMipSize.x, sourceMipSize.y, sourceMipSize.x - 1, sourceMipSize.y - 1));
-                cmd.SetComputeVectorParam(mipCS, m_ScaleId, new Vector4(sourceMipSize.x / (float)mipSize.x, sourceMipSize.y / (float)mipSize.y, 0, 0));
+                cmd.SetComputeVectorParam(mipCS, "_DstOffset", new Vector4(scaleOffset.z, scaleOffset.w, 0, 0));
+                cmd.SetComputeVectorParam(mipCS, "_DstSize", new Vector4(mipSize.x, mipSize.y, 0, 0));
+                cmd.SetComputeVectorParam(mipCS, "_SrcSize", new Vector4(srcSize.x, srcSize.y, srcSize.x - 1, srcSize.y - 1));
+                cmd.SetComputeVectorParam(mipCS, "_Scale", new Vector4(srcSize.x / (float)mipSize.x, srcSize.y / (float)mipSize.y, 0, 0));
 
-                // 计算组数量
-                int groupX = Mathf.CeilToInt(mipSize.x / 8.0f);
-                int groupY = Mathf.CeilToInt(mipSize.y / 8.0f);
-
-                // 重要：在移动端，连续 Dispatch 同一个 RWTexture，Unity 会自动处理 Barrier
+                int groupX = Mathf.Max(1, Mathf.CeilToInt(mipSize.x / 8.0f));
+                int groupY = Mathf.Max(1, Mathf.CeilToInt(mipSize.y / 8.0f));
                 cmd.DispatchCompute(mipCS, kernel, groupX, groupY, 1);
             }
-
-            cmd.EndSample("HizMipGenerateCS");
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }
     }
 
-    //遮挡剔除计算，请求回读数据
-    private class HizCullingRenderPass : ScriptableRenderPass {
-        private HizCullingRenderFeature m_Parent;
-        public HizCullingRenderPass(HizCullingRenderFeature parent) {
-            m_Parent = parent;
-            renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
+    private class HizCullingStandardPass : ScriptableRenderPass {
+        private HizCullingRenderFeature m_Parent; 
+        private HizCameraContext m_Ctx;
+        private HizReadbackBuffer m_RbBuf;
+        public void Prepare(HizCameraContext ctx, HizReadbackBuffer buf) { 
+            m_Ctx = ctx; 
+            m_RbBuf = buf; 
         }
-        public void Dispose() {
-            
+        public HizCullingStandardPass(HizCullingRenderFeature parent) { 
+            m_Parent = parent; 
+            renderPassEvent = RenderPassEvent.AfterRenderingOpaques; 
         }
-        private MaterialPropertyBlock m_PropBlock; // 定义成员变量
+
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
-            if (renderingData.cameraData.cameraType != CameraType.Game) return;
+            if (m_Ctx == null || m_RbBuf == null || m_RbBuf.ActiveCount <= 0) return;
 
             var mgr = HizCullingMgr.Instance;
-            var hizInfo = mgr.GetHizInfo(out _);
-            if (hizInfo == null) return;
-
             var cullCS = mgr.Setting.HizCullCS;
-            var cmd = CommandBufferPool.Get("HizCulling_Combined");
+            int kernel = cullCS.FindKernel("CSMain_Standard");
+            var cmd = CommandBufferPool.Get("HizCulling_Standard");
 
-            // --- 0. 公共参数设置 ---
-            var vp = renderingData.cameraData.GetGPUProjectionMatrix() * renderingData.cameraData.GetViewMatrix();
-            cmd.SetComputeMatrixParam(cullCS, "_HizCullVP", vp);
+            SetupCommonParams(cmd, cullCS, m_Ctx, renderingData);
+
+            cmd.SetBufferData(m_Ctx.AABBCenterBuffer, mgr.MasterAABBCenters, 0, 0, m_RbBuf.ActiveCount);
+            cmd.SetBufferData(m_Ctx.AABBExtentBuffer, mgr.MasterAABBExtents, 0, 0, m_RbBuf.ActiveCount);
+            cmd.SetComputeTextureParam(cullCS, kernel, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
+            cmd.SetComputeBufferParam(cullCS, kernel, "_AABBCenterBuffer", m_Ctx.AABBCenterBuffer);
+            cmd.SetComputeBufferParam(cullCS, kernel, "_AABBExtentBuffer", m_Ctx.AABBExtentBuffer);
+            cmd.SetComputeBufferParam(cullCS, kernel, "_CullResultBuffer", m_RbBuf.ResultBuffer);
+            cmd.SetComputeIntParam(cullCS, "_CullableCount", m_RbBuf.ActiveCount);
+
+            int groups = Mathf.Max(1, Mathf.CeilToInt(m_RbBuf.ActiveCount / 64f));
+            cmd.DispatchCompute(cullCS, kernel, groups, 1, 1);
             
-            cmd.SetComputeVectorParam(cullCS, "_HizMinMaxMipAndScreenSize", new Vector4(hizInfo.MaxMipLevel, hizInfo.MinMipLevel, hizInfo.ScreenResolution.x, hizInfo.ScreenResolution.y));
-            cmd.SetComputeVectorArrayParam(cullCS, "_HizAtlasMipScaleOffset", hizInfo.HizMipScaleOffset);
-            cmd.SetComputeVectorArrayParam(cullCS, "_FrustumPlanes", hizInfo.FrustumPlanes);
-
-            // ========================================================
-            // --- 1. Standard 剔除 (CPU 回读模式) ---
-            // ========================================================
-            if (hizInfo.HizCullableCount > 0) {
-                int kernelStd = cullCS.FindKernel("CSMain_Standard");
-                cmd.SetComputeTextureParam(cullCS, kernelStd, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
-                // 上传 AABB 数据
-                cmd.SetBufferData(hizInfo.AABBCenterBuffer, mgr.MasterAABBCenters, 0, 0, hizInfo.HizCullableCount);
-                cmd.SetBufferData(hizInfo.AABBExtentBuffer, mgr.MasterAABBExtents, 0, 0, hizInfo.HizCullableCount);
-
-                cmd.SetComputeBufferParam(cullCS, kernelStd, "_AABBCenterBuffer", hizInfo.AABBCenterBuffer);
-                cmd.SetComputeBufferParam(cullCS, kernelStd, "_AABBExtentBuffer", hizInfo.AABBExtentBuffer);
-                cmd.SetComputeBufferParam(cullCS, kernelStd, "_CullResultBuffer", hizInfo.HizCullResultBuffer);
-                cmd.SetComputeIntParam(cullCS, "_CullableCount", hizInfo.HizCullableCount);
-
-                int groupsStd = Mathf.CeilToInt(hizInfo.HizCullableCount / 64f);
-                cmd.DispatchCompute(cullCS, kernelStd, groupsStd, 1, 1);
-
-                // 发起异步回读
-                cmd.RequestAsyncReadback(hizInfo.HizCullResultBuffer, hizInfo.AsyncReadBackResult);
-                hizInfo.IsWating = true;
+            if (mgr.Setting.DebugLogSend) {
+                Debug.Log($"<color=#00B4FF><b>SEND▶</b></color> Frame : {Time.frameCount} , ID :{m_RbBuf.ID}");
             }
+            m_RbBuf.RequestFrameCount = Time.frameCount;
+            cmd.RequestAsyncReadback(m_RbBuf.ResultBuffer, m_RbBuf.AsyncReadBackAction);
+            
+            context.ExecuteCommandBuffer(cmd);
+            CommandBufferPool.Release(cmd);
+        }
+    }
 
-            // ========================================================
-            // --- 2. Instance 剔除 (GPU 驱动模式) ---
-            // ========================================================
-            var batch = mgr.GetInstanceBatches(); // 假设 Mgr 里维护了 Batch 列表
-            if (batch != null) {
-                int kernelInst = cullCS.FindKernel("CSMain_Instance");
-                // A. 重置 AppendBuffer 计数器
+    private class HizCullingInstancePass : ScriptableRenderPass {
+        private HizCullingRenderFeature m_Parent;
+        private HizCameraContext m_Ctx;
+        private System.Collections.Generic.List<HizInstanceBatch> m_Batches;
+
+        public HizCullingInstancePass(HizCullingRenderFeature parent) { m_Parent = parent; renderPassEvent = RenderPassEvent.AfterRenderingOpaques; }
+        public void Prepare(HizCameraContext ctx, System.Collections.Generic.List<HizInstanceBatch> batches) { m_Ctx = ctx; m_Batches = batches; }
+
+        public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
+            if (m_Ctx == null || m_Batches == null) return;
+
+            var cullCS = HizCullingMgr.Instance.Setting.HizCullCS;
+            int kernel = cullCS.FindKernel("CSMain_Instance");
+            var cmd = CommandBufferPool.Get("HizCulling_Instance");
+
+            SetupCommonParams(cmd, cullCS, m_Ctx, renderingData);
+            cmd.SetComputeTextureParam(cullCS, kernel, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
+
+            foreach (var batch in m_Batches) {
+                if (batch.totalCount <= 0) continue;
+
                 cmd.SetBufferCounterValue(batch.visibleIndexBuffer, 0);
-                cmd.SetComputeTextureParam(cullCS, kernelInst, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
-                // B. 设置 Batch 专用参数并 Dispatch
-                cmd.SetComputeBufferParam(cullCS, kernelInst, "_InstanceMatrixBuffer", batch.instanceDataBuffer);
-                cmd.SetComputeBufferParam(cullCS, kernelInst, "_VisibleInstanceIndexBuffer", batch.visibleIndexBuffer);
+                cmd.SetComputeBufferParam(cullCS, kernel, "_InstanceMatrixBuffer", batch.instanceDataBuffer);
+                cmd.SetComputeBufferParam(cullCS, kernel, "_VisibleInstanceIndexBuffer", batch.visibleIndexBuffer);
                 cmd.SetComputeIntParam(cullCS, "_InstanceCount", batch.totalCount);
                 cmd.SetComputeVectorParam(cullCS, "_LocalAABBExtent", batch.mesh.bounds.extents);
 
-                int groupsInst = Mathf.CeilToInt(batch.totalCount / 64f);
-                cmd.DispatchCompute(cullCS, kernelInst, groupsInst, 1, 1);
-
-                // C. 将 AppendBuffer 的 Count 拷贝到 ArgsBuffer 的第 2 个 uint (instanceCount)
-                // 注意：ArgsBuffer 的布局是 [indexCount, instanceCount, startIndex, baseVertex, startInstance]
+                int groups = Mathf.Max(1, Mathf.CeilToInt(batch.totalCount / 64f));
+                cmd.DispatchCompute(cullCS, kernel, groups, 1, 1);
                 cmd.CopyCounterValue(batch.visibleIndexBuffer, batch.argsBuffer, 4);
-                
-                
-                // D. 立即绘制 (此时 GPU 已经知道了 instanceCount)
-                // 确保 Material 已经设置了对应的 Buffer
+            }
+
+            context.ExecuteCommandBuffer(cmd);
+            CommandBufferPool.Release(cmd);
+        }
+    }
+
+    private class HizDrawInstancePass : ScriptableRenderPass {
+        private List<HizInstanceBatch> m_Batches;
+        public void Prepare(List<HizInstanceBatch> batches) { m_Batches = batches; }
+        public HizDrawInstancePass() { renderPassEvent = RenderPassEvent.AfterRenderingOpaques; }
+
+        public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
+            if (m_Batches == null) return;
+            var cmd = CommandBufferPool.Get("HizDraw_Instance");
+            
+            foreach(var batch in m_Batches) {
+                if (batch.totalCount <= 0) continue;
                 batch.material.SetBuffer("_VisibleIndexBuffer", batch.visibleIndexBuffer);
                 batch.material.SetBuffer("_InstanceMatrixBuffer", batch.instanceDataBuffer);
                 cmd.DrawMeshInstancedIndirect(batch.mesh, 0, batch.material, 0, batch.argsBuffer);
@@ -249,4 +252,3 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
         }
     }
 }
-

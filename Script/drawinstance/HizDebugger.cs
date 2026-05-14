@@ -28,7 +28,7 @@ public class HizCullingDebugger : MonoBehaviour
         var batch = HizCullingMgr.Instance.GetInstanceBatches();
         if (batch == null ) return;
 
-        var targetBatch = batch; // 测试第一个 Batch
+        var targetBatch = batch[0]; // 测试第一个 Batch
 
         // 请求回读 ArgsBuffer
         // 参数：buffer, size (20字节), offset (0), callback

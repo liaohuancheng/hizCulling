@@ -37,11 +37,11 @@ public class HizInstanceTest : MonoBehaviour {
             
             matrices[i] = Matrix4x4.TRS(pos, rot, Vector3.one);
         }
-        
-        
+
+        m_Batch = new HizInstanceBatch(Mesh, Material, matrices);
         // 将 Batch 注册到管理器中
         // 注意：确保你的 HizCullingMgr 有 AddInstanceBatch 方法
-        HizCullingMgr.Instance.CreateTestBatch(Mesh, Material, matrices);
+        HizCullingMgr.Instance.AddInstanceBatch(m_Batch);
     }
 
     void OnDestroy() {
