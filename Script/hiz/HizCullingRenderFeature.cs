@@ -44,16 +44,15 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             renderer.EnqueuePass(m_HizMipGeneratePass);
 
             var rbBuffer = HizCullingMgr.Instance.GetAvailableReadbackBuffer();
-            if (rbBuffer != null) {
-                HizCullingMgr.Instance.FillReadbackSnapshot(rbBuffer);
-                if (rbBuffer.ActiveCount > 0) {
-                    m_CullingStandardPass.Prepare(cameraContext, rbBuffer);
-                    renderer.EnqueuePass(m_CullingStandardPass);
-                }
-                else {
-                    rbBuffer.IsWaiting = false; 
-                }
+            HizCullingMgr.Instance.FillReadbackSnapshot(rbBuffer);
+            if (rbBuffer.ActiveCount > 0) {
+                m_CullingStandardPass.Prepare(cameraContext, rbBuffer);
+                renderer.EnqueuePass(m_CullingStandardPass);
             }
+            else {
+                rbBuffer.IsWaiting = false; 
+            }
+            
 
             var batches = HizCullingMgr.Instance.GetInstanceBatches();
             if (batches != null && batches.Count > 0) {
@@ -88,8 +87,9 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
             if (m_Ctx == null || m_Ctx.HizMat == null) return;
             var cmd = CommandBufferPool.Get("CopyLinearDepth");
-            cmd.GetTemporaryRT(Shader.PropertyToID("_LinearDepthRT"), renderingData.cameraData.cameraTargetDescriptor.width, renderingData.cameraData.cameraTargetDescriptor.height, 0, FilterMode.Point, RenderTextureFormat.RFloat);
-            cmd.SetRenderTarget(Shader.PropertyToID("_LinearDepthRT"), RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            cmd.GetTemporaryRT(HizShaderProperty.TextureLinearDepth, renderingData.cameraData.cameraTargetDescriptor.width, renderingData.cameraData
+                .cameraTargetDescriptor.height, 0, FilterMode.Point, RenderTextureFormat.RFloat);
+            cmd.SetRenderTarget(HizShaderProperty.TextureLinearDepth, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
             cmd.SetViewProjectionMatrices(Matrix4x4.identity, Matrix4x4.identity);
             cmd.SetGlobalTexture("_SourceTex", renderingData.cameraData.renderer.cameraDepthTarget);
             cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_Ctx.HizMat, 0, 4);
@@ -119,7 +119,7 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             cmd.SetRenderTarget(m_Parent.HizMipAtlasHandle, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
             cmd.ClearRenderTarget(false, true, Color.black); 
             cmd.SetComputeTextureParam(mipCS, kernel, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
-            cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", Shader.PropertyToID("_LinearDepthRT"));
+            cmd.SetComputeTextureParam(mipCS, kernel, "_SourceTex", HizShaderProperty.TextureLinearDepth);
 
             for (int i = m_Ctx.MaxMipLevel; i < m_Ctx.MinMipLevel + 1; i++) {
                 var mipSize = m_Ctx.HizMipResolutions[i];
