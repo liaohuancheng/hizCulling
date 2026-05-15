@@ -136,7 +136,6 @@ GameObject:
   - component: {fileID: 134876689}
   - component: {fileID: 134876690}
   - component: {fileID: 134876691}
-  - component: {fileID: 134876692}
   - component: {fileID: 134876694}
   - component: {fileID: 134876695}
   m_Layer: 0
@@ -298,25 +297,6 @@ MonoBehaviour:
   mobileMoveSensitivity: 0.05
   smoothMovement: 1
   smoothTime: 0.1
---- !u!114 &134876692
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 134876685}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 92ef7b9b805cfb242a5121021351e212, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  spawnCount: 2000
-  spawnRange: 100
-  buttonSize: {x: 220, y: 50}
-  prefab: {fileID: 0}
-  camTrans: {fileID: 0}
-  testWidth: 1333
-  testHeight: 751
 --- !u!114 &134876694
 MonoBehaviour:
   m_ObjectHideFlags: 0
