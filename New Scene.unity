@@ -357,6 +357,21 @@ MonoBehaviour:
     SpawnRadius: 100
     MinScale: 3
     MaxScale: 1
+  - Name: 3
+    InstanceMesh: {fileID: 10206, guid: 0000000000000000e000000000000000, type: 0}
+    InstanceMaterial: {fileID: 2100000, guid: 6c1fef516009f4b41a87411f4badfa7f, type: 2}
+    SpawnCount: 1000
+    SpawnRadius: 100
+    MinScale: 3
+    MaxScale: 1
+  - Name: 4
+    InstanceMesh: {fileID: 8984044216318202677, guid: 827845ac98dc9ba479b6b97f5bbc04aa,
+      type: 3}
+    InstanceMaterial: {fileID: 2100000, guid: 01425867c47b2424c9864cded192b33f, type: 2}
+    SpawnCount: 1000
+    SpawnRadius: 100
+    MinScale: 3
+    MaxScale: 1
   buttonSize: {x: 220, y: 50}
 --- !u!1001 &345733423
 PrefabInstance:
