@@ -1,6 +1,7 @@
 #pragma enable_d3d11_debug_symbols
 #pragma kernel CSMain_Standard
-#pragma kernel CSMain_Instance
+#pragma kernel CSMain_GlobalInstance
+#pragma kernel CSClearArgs
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
 Texture2D<float> _HizMipAtlas;
@@ -12,6 +13,8 @@ uint _CullableCount;
 float4x4 _HizCullVP;
 float4 _HizMinMaxMipAndScreenSize;
 float4 _HizAtlasMipScaleOffset[16];
+
+
 
 
 float3 TransformWorldToNDC(float3 worldPos)
@@ -120,22 +123,52 @@ void CSMain_Standard(uint3 id : SV_DispatchThreadID)
     _CullResultBuffer[index] = CheckVisable(center, extent) ? 0 : 1;
 }
 
-StructuredBuffer<float4x4> _InstanceMatrixBuffer;
-AppendStructuredBuffer<uint> _VisibleInstanceIndexBuffer;
-uint _InstanceCount;
-float3 _LocalAABBExtent;
-// 2. 处理 DrawMeshInstancedIndirect 物体
-[numthreads(64, 1, 1)]
-void CSMain_Instance(uint3 id : SV_DispatchThreadID)
-{
-    if (id.x >= _InstanceCount) return;
+struct GPUInstanceData {
+    float4x4 _matrix;
+    float3 extents;
+    uint batchIndex;
+};
 
-    float4x4 mat = _InstanceMatrixBuffer[id.x];
-    float3 worldPos = float3(mat._m03, mat._m13, mat._m23);
-    
-    // 这里假设 Instance 的 AABB 是统一的，或者你可以从另一个 Buffer 读取每个实例的 Extent
-    if (CheckVisable(worldPos, _LocalAABBExtent))
-    {
-        _VisibleInstanceIndexBuffer.Append(id.x);
+// 全局资源大池子
+StructuredBuffer<GPUInstanceData> _GlobalInstanceDataBuffer;
+StructuredBuffer<uint> _BatchOutputOffsets;           // 每个批次在可见列表中的起始位置
+RWStructuredBuffer<uint> _GlobalVisibleIndexBuffer;   // 全局可见索引池
+RWStructuredBuffer<uint> _GlobalArgsBuffer;           // 全局参数池 [BatchCount * 5]
+
+uint _TotalInstanceCount;
+uint _BatchCount;
+
+// 阶段 1：只负责清空 ArgsBuffer 中的 InstanceCount 字段
+[numthreads(64, 1, 1)]
+void CSClearArgs(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= _BatchCount) return;
+    // ArgsBuffer 结构: [0]IdxCount, [1]InstCount, [2]StartIdx, [3]BaseVtx, [4]StartInst
+    _GlobalArgsBuffer[id.x * 5 + 1] = 0; 
+}
+
+// 阶段 2：全局一键剔除 不管有多少种物体，全放在这里算
+[numthreads(64, 1, 1)]
+void CSMain_GlobalInstance(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= _TotalInstanceCount) return;
+
+    GPUInstanceData data = _GlobalInstanceDataBuffer[id.x];
+    float3 worldPos = float3(data._matrix._m03, data._matrix._m13, data._matrix._m23);
+
+    // 计算实际的缩放 Extent
+    float3 scale = float3(length(data._matrix._m00_m10_m20), length(data._matrix._m01_m11_m21), length(data._matrix._m02_m12_m22));
+    float3 worldExtent = data.extents * scale;
+
+    // 剔除测试
+    if (CheckVisable(worldPos, worldExtent)) {
+        // 找到它属于的 Args 计数器位置
+        uint argsIndex = data.batchIndex * 5 + 1;
+        
+        // 【核心优化】：原子累加 让 GPU 硬件去分配索引序号
+        uint count;
+        InterlockedAdd(_GlobalArgsBuffer[argsIndex], 1, count);
+
+        // 计算存入全局可见列表的绝对位置
+        uint writeOffset = _BatchOutputOffsets[data.batchIndex] + count;
+        _GlobalVisibleIndexBuffer[writeOffset] = id.x;
     }
 }

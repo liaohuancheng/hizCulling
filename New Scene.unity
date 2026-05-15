@@ -137,8 +137,8 @@ GameObject:
   - component: {fileID: 134876690}
   - component: {fileID: 134876691}
   - component: {fileID: 134876692}
-  - component: {fileID: 134876693}
   - component: {fileID: 134876694}
+  - component: {fileID: 134876695}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -305,7 +305,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 134876685}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 92ef7b9b805cfb242a5121021351e212, type: 3}
   m_Name: 
@@ -317,25 +317,6 @@ MonoBehaviour:
   camTrans: {fileID: 0}
   testWidth: 1333
   testHeight: 751
---- !u!114 &134876693
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 134876685}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 12e6c118729eb9142b1454fab5d43de5, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  TargetCamera: {fileID: 134876687}
-  Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
-  Material: {fileID: 2100000, guid: 5a6f2f5e75d02734b9f15b2d0eb2c097, type: 2}
-  Count: 10000
-  SpawnRadius: 100
-  MinRadius: 5
-  YOffset: -1
 --- !u!114 &134876694
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -348,7 +329,35 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4f1a8cb80d7064440b07d5b01a5a13d4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  testScript: {fileID: 134876693}
+--- !u!114 &134876695
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 134876685}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 12e6c118729eb9142b1454fab5d43de5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  camTrans: {fileID: 134876688}
+  Configs:
+  - Name: 1
+    InstanceMesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+    InstanceMaterial: {fileID: 2100000, guid: 5a6f2f5e75d02734b9f15b2d0eb2c097, type: 2}
+    SpawnCount: 1000
+    SpawnRadius: 100
+    MinScale: 3
+    MaxScale: 1
+  - Name: 2
+    InstanceMesh: {fileID: 10208, guid: 0000000000000000e000000000000000, type: 0}
+    InstanceMaterial: {fileID: 2100000, guid: 43ef4edf4b5ec6d489773c27a3419b6b, type: 2}
+    SpawnCount: 1000
+    SpawnRadius: 100
+    MinScale: 3
+    MaxScale: 1
+  buttonSize: {x: 220, y: 50}
 --- !u!1001 &345733423
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -554,6 +563,11 @@ PrefabInstance:
       propertyPath: m_Name
       value: test3
       objectReference: {fileID: 0}
+    - target: {fileID: 1610722432678483892, guid: 89cd28042df93f448a5bd8cd2e2cc605,
+        type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 2062590969576614112, guid: 89cd28042df93f448a5bd8cd2e2cc605,
         type: 3}
       propertyPath: m_LocalPosition.x
@@ -607,7 +621,7 @@ PrefabInstance:
     - target: {fileID: 5230658564421315712, guid: 89cd28042df93f448a5bd8cd2e2cc605,
         type: 3}
       propertyPath: m_Enabled
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5406315491371923896, guid: 89cd28042df93f448a5bd8cd2e2cc605,
         type: 3}

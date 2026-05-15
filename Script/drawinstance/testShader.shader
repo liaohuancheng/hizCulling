@@ -18,26 +18,40 @@ Shader "Custom/HizIndirectStandard" {
             struct Varyings {
                 float4 positionCS : SV_POSITION;
             };
-
-            // GPU 传入的 Buffer
-            StructuredBuffer<uint> _VisibleIndexBuffer;
-            StructuredBuffer<float4x4> _InstanceMatrixBuffer;
+            
             float4 _BaseColor;
+// 新增的参数
+            int _BatchVisibleOffset; 
+
+            // C# 中的 GPUInstanceData 结构体
+            struct GPUInstanceData {
+                float4x4 _matrix;
+                float3 extents;
+                uint batchIndex;
+            };
+
+            // 全局缓冲
+            StructuredBuffer<uint> _GlobalVisibleIndexBuffer;
+            StructuredBuffer<GPUInstanceData> _GlobalInstanceDataBuffer;
 
             Varyings vert(Attributes input, uint instanceID : SV_InstanceID) {
                 Varyings output;
                 
-                // 1. 获取可见实例的真实索引
-                uint realIndex = _VisibleIndexBuffer[instanceID];
-                // 2. 获取对应的变换矩阵
-                float4x4 instanceMatrix = _InstanceMatrixBuffer[realIndex];
+                // 1. 根据当前 Batch 的起始偏移，找到在全局池子里的绝对索引
+                uint globalVisibleIndex = _BatchVisibleOffset + instanceID;
                 
-                // 3. 转换到世界空间再到裁剪空间
+                // 2. 找到物体的真实 ID
+                uint realID = _GlobalVisibleIndexBuffer[globalVisibleIndex];
+                
+                // 3. 从全局矩阵池提取它的矩阵
+                float4x4 instanceMatrix = _GlobalInstanceDataBuffer[realID]._matrix;
+                
                 float4 worldPos = mul(instanceMatrix, float4(input.positionOS.xyz, 1.0));
                 output.positionCS = mul(UNITY_MATRIX_VP, worldPos);
                 
                 return output;
             }
+            
 
             float4 frag(Varyings input) : SV_Target {
                 return _BaseColor;

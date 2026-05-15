@@ -11,6 +11,9 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
     private HizCullingStandardPass m_CullingStandardPass;
     private HizCullingInstancePass m_CullingInstancePass;
     private HizDrawInstancePass m_DrawInstancePass;
+    private static readonly int GlobalInstanceDataBuffer = Shader.PropertyToID("_GlobalInstanceDataBuffer");
+    private static readonly int GlobalVisibleIndexBuffer = Shader.PropertyToID("_GlobalVisibleIndexBuffer");
+    private static readonly int BatchVisibleOffset = Shader.PropertyToID("_BatchVisibleOffset");
 
     public override void Create() {
         m_LinearDepthCopyPass = new LinearDepthCopyPass();
@@ -44,19 +47,24 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             renderer.EnqueuePass(m_HizMipGeneratePass);
 
             var rbBuffer = HizCullingMgr.Instance.GetAvailableReadbackBuffer();
-            HizCullingMgr.Instance.FillReadbackSnapshot(rbBuffer);
-            if (rbBuffer.ActiveCount > 0) {
-                m_CullingStandardPass.Prepare(cameraContext, rbBuffer);
-                renderer.EnqueuePass(m_CullingStandardPass);
+            //buffer都被锁定
+            if (rbBuffer != null)
+            {
+                HizCullingMgr.Instance.FillReadbackSnapshot(rbBuffer);
+                if (rbBuffer.ActiveCount > 0) {
+                    m_CullingStandardPass.Prepare(cameraContext, rbBuffer);
+                    renderer.EnqueuePass(m_CullingStandardPass);
+                }
+                else {
+                    rbBuffer.IsWaiting = false; 
+                }
             }
-            else {
-                rbBuffer.IsWaiting = false; 
-            }
+            
             
 
             var batches = HizCullingMgr.Instance.GetInstanceBatches();
             if (batches != null && batches.Count > 0) {
-                m_CullingInstancePass.Prepare(cameraContext, batches);
+                m_CullingInstancePass.Prepare(cameraContext);
                 renderer.EnqueuePass(m_CullingInstancePass);
             }
         }
@@ -65,7 +73,6 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
         // 这样 Scene 窗口就能复用主相机刚才剔除后的 argsBuffer 结果，直接画出可见的实例
         var drawBatches = HizCullingMgr.Instance.GetInstanceBatches();
         if (drawBatches != null && drawBatches.Count > 0) {
-            m_DrawInstancePass.Prepare(drawBatches);
             renderer.EnqueuePass(m_DrawInstancePass);
         }
     }
@@ -197,34 +204,38 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
     private class HizCullingInstancePass : ScriptableRenderPass {
         private HizCullingRenderFeature m_Parent;
         private HizCameraContext m_Ctx;
-        private System.Collections.Generic.List<HizInstanceBatch> m_Batches;
 
-        public HizCullingInstancePass(HizCullingRenderFeature parent) { m_Parent = parent; renderPassEvent = RenderPassEvent.AfterRenderingOpaques; }
-        public void Prepare(HizCameraContext ctx, System.Collections.Generic.List<HizInstanceBatch> batches) { m_Ctx = ctx; m_Batches = batches; }
+        public HizCullingInstancePass(HizCullingRenderFeature parent) { 
+            m_Parent = parent; 
+            renderPassEvent = RenderPassEvent.AfterRenderingOpaques; 
+        }
+        public void Prepare(HizCameraContext ctx) { m_Ctx = ctx; }
 
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
-            if (m_Ctx == null || m_Batches == null) return;
+            var mgr = HizCullingMgr.Instance;
+            if (m_Ctx == null || mgr.TotalInstanceCount <= 0 || mgr.GlobalInstanceBuffer == null) return;
 
-            var cullCS = HizCullingMgr.Instance.Setting.HizCullCS;
-            int kernel = cullCS.FindKernel("CSMain_Instance");
-            var cmd = CommandBufferPool.Get("HizCulling_Instance");
+            var cullCS = mgr.Setting.HizCullCS;
+            var cmd = CommandBufferPool.Get("HizCulling_GlobalInstance");
 
             SetupCommonParams(cmd, cullCS, m_Ctx, renderingData);
-            cmd.SetComputeTextureParam(cullCS, kernel, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
 
-            foreach (var batch in m_Batches) {
-                if (batch.totalCount <= 0) continue;
+            // ================= 阶段 1：极速清零参数池 =================
+            int kernelClear = cullCS.FindKernel("CSClearArgs");
+            cmd.SetComputeBufferParam(cullCS, kernelClear, "_GlobalArgsBuffer", mgr.GlobalArgsBuffer);
+            cmd.SetComputeIntParam(cullCS, "_BatchCount", mgr.GetInstanceBatches().Count);
+            cmd.DispatchCompute(cullCS, kernelClear, Mathf.Max(1, Mathf.CeilToInt(mgr.GetInstanceBatches().Count / 64f)), 1, 1);
 
-                cmd.SetBufferCounterValue(batch.visibleIndexBuffer, 0);
-                cmd.SetComputeBufferParam(cullCS, kernel, "_InstanceMatrixBuffer", batch.instanceDataBuffer);
-                cmd.SetComputeBufferParam(cullCS, kernel, "_VisibleInstanceIndexBuffer", batch.visibleIndexBuffer);
-                cmd.SetComputeIntParam(cullCS, "_InstanceCount", batch.totalCount);
-                cmd.SetComputeVectorParam(cullCS, "_LocalAABBExtent", batch.mesh.bounds.extents);
-
-                int groups = Mathf.Max(1, Mathf.CeilToInt(batch.totalCount / 64f));
-                cmd.DispatchCompute(cullCS, kernel, groups, 1, 1);
-                cmd.CopyCounterValue(batch.visibleIndexBuffer, batch.argsBuffer, 4);
-            }
+            // ================= 阶段 2：全量合批剔除 =================
+            int kernelCull = cullCS.FindKernel("CSMain_GlobalInstance");
+            cmd.SetComputeTextureParam(cullCS, kernelCull, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
+            cmd.SetComputeBufferParam(cullCS, kernelCull, "_GlobalInstanceDataBuffer", mgr.GlobalInstanceBuffer);
+            cmd.SetComputeBufferParam(cullCS, kernelCull, "_BatchOutputOffsets", mgr.BatchOutputOffsetsBuffer);
+            cmd.SetComputeBufferParam(cullCS, kernelCull, "_GlobalVisibleIndexBuffer", mgr.GlobalVisibleBuffer);
+            cmd.SetComputeBufferParam(cullCS, kernelCull, "_GlobalArgsBuffer", mgr.GlobalArgsBuffer);
+            cmd.SetComputeIntParam(cullCS, "_TotalInstanceCount", mgr.TotalInstanceCount);
+            
+            cmd.DispatchCompute(cullCS, kernelCull, Mathf.Max(1, Mathf.CeilToInt(mgr.TotalInstanceCount / 64f)), 1, 1);
 
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
@@ -232,19 +243,29 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
     }
 
     private class HizDrawInstancePass : ScriptableRenderPass {
-        private List<HizInstanceBatch> m_Batches;
-        public void Prepare(List<HizInstanceBatch> batches) { m_Batches = batches; }
         public HizDrawInstancePass() { renderPassEvent = RenderPassEvent.AfterRenderingOpaques; }
 
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
-            if (m_Batches == null) return;
-            var cmd = CommandBufferPool.Get("HizDraw_Instance");
+            var mgr = HizCullingMgr.Instance;
+            var batches = mgr.GetInstanceBatches();
+            if (batches == null || mgr.TotalInstanceCount <= 0 || mgr.GlobalArgsBuffer == null) return;
+
+            var cmd = CommandBufferPool.Get("HizDraw_GlobalInstance");
             
-            foreach(var batch in m_Batches) {
-                if (batch.totalCount <= 0) continue;
-                batch.material.SetBuffer("_VisibleIndexBuffer", batch.visibleIndexBuffer);
-                batch.material.SetBuffer("_InstanceMatrixBuffer", batch.instanceDataBuffer);
-                cmd.DrawMeshInstancedIndirect(batch.mesh, 0, batch.material, 0, batch.argsBuffer);
+            uint currentOffset = 0;
+            for(int i = 0; i < batches.Count; i++) {
+                var batch = batches[i];
+                if (batch.matrices.Length <= 0) continue;
+
+                // 哪个位置开始
+                batch.material.SetInt(BatchVisibleOffset, (int)currentOffset);
+                batch.material.SetBuffer(GlobalVisibleIndexBuffer, mgr.GlobalVisibleBuffer);
+                batch.material.SetBuffer(GlobalInstanceDataBuffer, mgr.GlobalInstanceBuffer);
+                
+                // 【核心】：大家用同一个 ArgsBuffer，但通过偏移量取各自的数据 (i * 20 字节)
+                cmd.DrawMeshInstancedIndirect(batch.mesh, 0, batch.material, 0, mgr.GlobalArgsBuffer, i * 20);
+
+                currentOffset += (uint)batch.matrices.Length;
             }
 
             context.ExecuteCommandBuffer(cmd);

@@ -129,30 +129,23 @@ public class HizReadbackBuffer {
 public class HizInstanceBatch {
     public Mesh mesh;
     public Material material;
-    public ComputeBuffer instanceDataBuffer;
-    public ComputeBuffer visibleIndexBuffer;
-    public ComputeBuffer argsBuffer;
-    public int totalCount;
-    private uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
+    public Matrix4x4[] matrices; // 暂存矩阵
+    public Vector3 extents;
 
     public HizInstanceBatch(Mesh mesh, Material material, Matrix4x4[] matrices) {
         this.mesh = mesh;
         this.material = material;
-        this.totalCount = matrices.Length;
-
-        instanceDataBuffer = new ComputeBuffer(totalCount, 16 * 4);
-        instanceDataBuffer.SetData(matrices);
-
-        visibleIndexBuffer = new ComputeBuffer(totalCount, sizeof(uint), ComputeBufferType.Append);
-
-        argsBuffer = new ComputeBuffer(5, sizeof(uint), ComputeBufferType.IndirectArguments);
-        args[0] = mesh.GetIndexCount(0); // 必须确保有值
-        argsBuffer.SetData(args);
+        this.matrices = matrices;
+        this.extents = mesh.bounds.extents;
     }
 
     public void Dispose() {
-        instanceDataBuffer?.Release();
-        visibleIndexBuffer?.Release();
-        argsBuffer?.Release();
+        
     }
+}
+
+public struct GPUInstanceData {
+    public Matrix4x4 matrix;
+    public Vector3 extents; // 不同种类物体包围盒大小不同
+    public uint batchIndex; // 属于第几个 Batch（用于找到对应的 Args）
 }
