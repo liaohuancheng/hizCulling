@@ -14,84 +14,70 @@ float4x4 _HizCullVP;
 float4 _HizMinMaxMipAndScreenSize;
 float4 _HizAtlasMipScaleOffset[16];
 
-
-
+// --- 工具函数：坐标转换与可见性判断 ---
 
 float3 TransformWorldToNDC(float3 worldPos)
 {
     float4 clipPos = mul(_HizCullVP, float4(worldPos, 1.0));
     float3 ndc = clipPos.xyz / clipPos.w;
 
-    // 映射 XY 到 [0, 1]
     ndc.xy = ndc.xy * 0.5f + 0.5f;
 
-    // --- GLES 修正点 1: 移除手动 Y 翻转 ---
-    // 在 Compute Shader 处理渲染纹理时，GLES 通常不需要 1.0 - y
     #if UNITY_UV_STARTS_AT_TOP
     ndc.y = 1.0 - ndc.y; 
     #endif
     
-    //GLES: Z 是 [-1, 1]，转到 [0, 1]
     #if !defined(UNITY_REVERSED_Z)
     ndc.z = ndc.z * 0.5f + 0.5f;
     #endif
 
-    // 转化为线性深度 [0, 1]
     ndc.z = Linear01Depth(ndc.z, _ZBufferParams);
-    
     return ndc.xyz;
 }
 
 bool CheckVisable(float3 center, float3 extent) {
-    
-    // ==========================================
-    // 阶段 1：视锥剔除 (Frustum Culling)
-    // ==========================================
+    // 阶段 1：视锥剔除
     [unroll]
     for (int p = 0; p < 6; p++)
     {
         float4 plane = _FrustumPlanes[p];
         float r = dot(abs(plane.xyz), extent);
         float d = dot(plane.xyz, center) + plane.w;
-        if (d + r < 0)
-        {
-            return false;
-        }
+        if (d + r < 0) return false;
     }
 
-    // ==========================================
-    // 阶段 2：遮挡剔除 (Hi-Z Culling)
-    // ==========================================
+    // 阶段 2：遮挡剔除 (Hi-Z)
     float3 aabbMaxW = center + extent;
     float3 aabbMinW = center - extent;
 
-    // 计算 8 个顶点的 NDC
-    float3 p0 = TransformWorldToNDC(float3(aabbMinW.x, aabbMinW.y, aabbMinW.z));
-    float3 p1 = TransformWorldToNDC(float3(aabbMinW.x, aabbMinW.y, aabbMaxW.z));
-    float3 p2 = TransformWorldToNDC(float3(aabbMinW.x, aabbMaxW.y, aabbMinW.z));
-    float3 p3 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMinW.y, aabbMinW.z));
-    float3 p4 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMaxW.y, aabbMinW.z));
-    float3 p5 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMinW.y, aabbMaxW.z));
-    float3 p6 = TransformWorldToNDC(float3(aabbMinW.x, aabbMaxW.y, aabbMaxW.z));
-    float3 p7 = TransformWorldToNDC(float3(aabbMaxW.x, aabbMaxW.y, aabbMaxW.z));
+    float3 points[8];
+    points[0] = TransformWorldToNDC(float3(aabbMinW.x, aabbMinW.y, aabbMinW.z));
+    points[1] = TransformWorldToNDC(float3(aabbMinW.x, aabbMinW.y, aabbMaxW.z));
+    points[2] = TransformWorldToNDC(float3(aabbMinW.x, aabbMaxW.y, aabbMinW.z));
+    points[3] = TransformWorldToNDC(float3(aabbMaxW.x, aabbMinW.y, aabbMinW.z));
+    points[4] = TransformWorldToNDC(float3(aabbMaxW.x, aabbMaxW.y, aabbMinW.z));
+    points[5] = TransformWorldToNDC(float3(aabbMaxW.x, aabbMinW.y, aabbMaxW.z));
+    points[6] = TransformWorldToNDC(float3(aabbMinW.x, aabbMaxW.y, aabbMaxW.z));
+    points[7] = TransformWorldToNDC(float3(aabbMaxW.x, aabbMaxW.y, aabbMaxW.z));
 
-    float3 ndcMin = min(min(min(p0, p1), min(p2, p3)), min(min(p4, p5), min(p6, p7)));
-    float3 ndcMax = max(max(max(p0, p1), max(p2, p3)), max(max(p4, p5), max(p6, p7)));
-
-    // 视锥近平面裁剪例外（如果在相机背后/穿过近平面，直接放行）
-    float4 clipPos = mul(_HizCullVP, float4(center - extent, 1.0));
-    if (clipPos.w <= _ProjectionParams.y) {
-        return true;
+    float3 ndcMin = points[0];
+    float3 ndcMax = points[0];
+    [unroll]
+    for(int i=1; i<8; i++) {
+        ndcMin = min(ndcMin, points[i]);
+        ndcMax = max(ndcMax, points[i]);
     }
 
-    float2 screenAABBSize = floor((ndcMax.xy - ndcMin.xy) * _HizMinMaxMipAndScreenSize.zw);
+    float4 clipPos = mul(_HizCullVP, float4(center, 1.0));
+    if (clipPos.w <= _ProjectionParams.y) return true;
+
+    float2 screenAABBSize = (ndcMax.xy - ndcMin.xy) * _HizMinMaxMipAndScreenSize.zw;
     float screenAABBRadius = max(screenAABBSize.x, screenAABBSize.y);
     
-    int mipLevel = ceil(log2(screenAABBRadius));
-    mipLevel = clamp(mipLevel, _HizMinMaxMipAndScreenSize.x, _HizMinMaxMipAndScreenSize.y);
+    int mipLevel = (int)ceil(log2(screenAABBRadius));
+    mipLevel = clamp(mipLevel, (int)_HizMinMaxMipAndScreenSize.x, (int)_HizMinMaxMipAndScreenSize.y);
     
     float4 atlasPixelOffsetSize = _HizAtlasMipScaleOffset[mipLevel];
-    
     ndcMax = clamp(ndcMax, 0.0, 1.0);
     ndcMin = clamp(ndcMin, 0.0, 1.0);
 
@@ -102,7 +88,6 @@ bool CheckVisable(float3 center, float3 extent) {
     screenPixelMinMax.xy = clamp(screenPixelMinMax.xy, minBoundary, maxBoundary);
     screenPixelMinMax.zw = clamp(screenPixelMinMax.zw, minBoundary, maxBoundary);
 
-    // 采样图集 (Load 指令相当于 texelFetch / LOAD_TEXTURE2D_LOD)
     float lbDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.xy, 0)).r;
     float rbDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.zy, 0)).r;
     float ltDepth = _HizMipAtlas.Load(int3(screenPixelMinMax.xw, 0)).r;
@@ -111,64 +96,83 @@ bool CheckVisable(float3 center, float3 extent) {
     
     return maxDepth > ndcMin.z;
 }
+
+// --- Kernel 1: 标准 GameObject 回读剔除 ---
+
 [numthreads(64, 1, 1)]
 void CSMain_Standard(uint3 id : SV_DispatchThreadID)
 {
-    uint index = id.x;
-    // 如果超出了实际要剔除的物体数量，直接返回
-    if (index >= _CullableCount) return;
-    float3 center = _AABBCenterBuffer[index].xyz;
-    float3 extent = _AABBExtentBuffer[index].xyz;
-    
-    _CullResultBuffer[index] = CheckVisable(center, extent) ? 0 : 1;
+    if (id.x >= _CullableCount) return;
+    float3 center = _AABBCenterBuffer[id.x].xyz;
+    float3 extent = _AABBExtentBuffer[id.x].xyz;
+    _CullResultBuffer[id.x] = CheckVisable(center, extent) ? 0 : 1;
 }
+
+// --- Kernel 2 & 3: GPU-Driven Instance 剔除与 LOD ---
 
 struct GPUInstanceData {
     float4x4 _matrix;
+    float4 blockData;
     float3 extents;
     uint batchIndex;
+    float4 lodDistances; // x:LOD0, y:LOD1, z:LOD2, w:Density
 };
 
-// 全局资源大池子
 StructuredBuffer<GPUInstanceData> _GlobalInstanceDataBuffer;
-StructuredBuffer<uint> _BatchOutputOffsets;           // 每个批次在可见列表中的起始位置
-RWStructuredBuffer<uint> _GlobalVisibleIndexBuffer;   // 全局可见索引池
-RWStructuredBuffer<uint> _GlobalArgsBuffer;           // 全局参数池 [BatchCount * 5]
+StructuredBuffer<uint> _BatchOutputOffsets;           // 子批次起始位置 [BatchCount * 3]
+RWStructuredBuffer<uint> _GlobalVisibleIndexBuffer;   // 全局索引池 [InstanceCount * 3]
+RWStructuredBuffer<uint> _GlobalArgsBuffer;           // 参数池 [BatchCount * 3 * 5]
 
 uint _TotalInstanceCount;
-uint _BatchCount;
+uint _BatchCount; // 注意：此处的 _BatchCount 在 C# 传入时应为 原始Batch数 * 3
 
-// 阶段 1：只负责清空 ArgsBuffer 中的 InstanceCount 字段
 [numthreads(64, 1, 1)]
 void CSClearArgs(uint3 id : SV_DispatchThreadID) {
     if (id.x >= _BatchCount) return;
-    // ArgsBuffer 结构: [0]IdxCount, [1]InstCount, [2]StartIdx, [3]BaseVtx, [4]StartInst
+    // 清空对应子批次的 InstanceCount (Args 数组的第二个 uint)
     _GlobalArgsBuffer[id.x * 5 + 1] = 0; 
 }
 
-// 阶段 2：全局一键剔除 不管有多少种物体，全放在这里算
 [numthreads(64, 1, 1)]
 void CSMain_GlobalInstance(uint3 id : SV_DispatchThreadID) {
     if (id.x >= _TotalInstanceCount) return;
 
     GPUInstanceData data = _GlobalInstanceDataBuffer[id.x];
+    
+    // 1. 获取世界坐标中心 (矩阵的第四列)
     float3 worldPos = float3(data._matrix._m03, data._matrix._m13, data._matrix._m23);
 
-    // 计算实际的缩放 Extent
-    float3 scale = float3(length(data._matrix._m00_m10_m20), length(data._matrix._m01_m11_m21), length(data._matrix._m02_m12_m22));
+    // 2. 距离剔除与 LOD 分级计算
+    float dist = length(worldPos - _WorldSpaceCameraPos);
+    uint lodLevel = 0;
+
+    if (dist < data.lodDistances.x) lodLevel = 0;
+    else if (dist < data.lodDistances.y) lodLevel = 1;
+    else if (dist < data.lodDistances.z) lodLevel = 2;
+    else return; // 超过 LOD2 距离，剔除
+
+    // 3. 计算缩放后的包围盒 (用于 Hiz 剔除测试)
+    // 取矩阵前三列的模长作为轴向缩放
+    float3 scale = float3(
+        length(float3(data._matrix._m00, data._matrix._m10, data._matrix._m20)),
+        length(float3(data._matrix._m01, data._matrix._m11, data._matrix._m21)),
+        length(float3(data._matrix._m02, data._matrix._m12, data._matrix._m22))
+    );
     float3 worldExtent = data.extents * scale;
 
-    // 剔除测试
+    // 4. Hiz 视锥 + 深度剔除
     if (CheckVisable(worldPos, worldExtent)) {
-        // 找到它属于的 Args 计数器位置
-        uint argsIndex = data.batchIndex * 5 + 1;
+        // 计算子批次索引：原始种类索引 * 3 + 当前LOD等级
+        uint subBatchIdx = data.batchIndex * 3 + lodLevel;
+        uint argsInstanceCountPos = subBatchIdx * 5 + 1;
         
-        // 【核心优化】：原子累加 让 GPU 硬件去分配索引序号
+        // 5. 原子增加子批次的实例计数
         uint count;
-        InterlockedAdd(_GlobalArgsBuffer[argsIndex], 1, count);
+        InterlockedAdd(_GlobalArgsBuffer[argsInstanceCountPos], 1, count);
 
-        // 计算存入全局可见列表的绝对位置
-        uint writeOffset = _BatchOutputOffsets[data.batchIndex] + count;
+        // 6. 写入可见索引列表
+        // 写入位置 = 子批次在总缓冲区中的基准偏移 + 刚才累加得到的序号
+        uint writeOffset = _BatchOutputOffsets[subBatchIdx] + count;
         _GlobalVisibleIndexBuffer[writeOffset] = id.x;
     }
 }

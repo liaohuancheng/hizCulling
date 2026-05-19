@@ -1,4 +1,5 @@
-﻿using System;
+﻿
+using System;
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -125,18 +126,34 @@ public class HizReadbackBuffer {
     }
 }
 
-// 3. Instance 批次：处理 DrawMeshInstancedIndirect
+// 3. Instance 批次：处理 DrawMeshInstancedIndirect (支持 Compute Shader GPU LOD)
 public class HizInstanceBatch {
-    public Mesh mesh;
-    public Material material;
-    public Matrix4x4[] matrices; // 暂存矩阵
+    public Mesh[] meshes = new Mesh[3];
+    public Material[] materials = new Material[3];
+    public Matrix4x4[] matrices; 
+    public Vector4[] blocks; // 额外属性 (如果支持 Block)
     public Vector3 extents;
+    public Vector4 lodDistances; // x: LOD0_Range, y: LOD1_Range, z: LOD2_Range, w: Density或备用
 
+    // 原始单LOD版本
     public HizInstanceBatch(Mesh mesh, Material material, Matrix4x4[] matrices) {
-        this.mesh = mesh;
-        this.material = material;
+        meshes[0] = mesh;
+        materials[0] = material;
         this.matrices = matrices;
         this.extents = mesh.bounds.extents;
+        lodDistances = new Vector4(99999f, 0, 0, 0); // 取消距离剔除
+    }
+
+    // 支持多LOD版本
+    public HizInstanceBatch(Mesh[] m, Material[] mat, Vector4 lodDist, Vector3 ext, Matrix4x4[] matrices, Vector4[] blocks = null) {
+        for(int i = 0; i < m.Length && i < 3; i++) {
+            meshes[i] = m[i];
+            materials[i] = mat[i];
+        }
+        this.lodDistances = lodDist;
+        this.extents = ext;
+        this.matrices = matrices;
+        this.blocks = blocks;
     }
 
     public void Dispose() {
@@ -145,7 +162,9 @@ public class HizInstanceBatch {
 }
 
 public struct GPUInstanceData {
-    public Matrix4x4 matrix;
-    public Vector3 extents; // 不同种类物体包围盒大小不同
-    public uint batchIndex; // 属于第几个 Batch（用于找到对应的 Args）
-}
+    public Matrix4x4 matrix;      // 64 Bytes
+    public Vector4 blockData;     // 16 Bytes
+    public Vector3 extents;       // 12 Bytes
+    public uint batchIndex;       // 4 Bytes  (属于第几个大Batch)
+    public Vector4 lodDistances;  // 16 Bytes (传入CS计算LOD等级并决定追加到哪个子Batch)
+} // Total: 112 Bytes

@@ -59,57 +59,109 @@ public class HizCullingMgr {
         SceneView.duringSceneGui += DrawSceneView;
     #endif
     }
+    
+    // --- 容量记录变量 ---
+    private int m_CurrentInstanceCapacity = 0;
+    private int m_CurrentBatchCapacity = 0;
 
+    // --- CPU 端缓存数组，避免每帧 new ---
+    private GPUInstanceData[] m_InstanceDataCache;
+    private uint[] m_ArgsCache;
+    private uint[] m_OffsetCache;
+    
     // 当你生成完所有的 InstanceBatch 后，必须调用这个方法进行打包！
     public void BuildGlobalBuffers() {
-        if (m_InstanceBatches.Count == 0) return;
+        int batchCount = m_InstanceBatches.Count;
+        if (batchCount == 0) return;
 
-        TotalInstanceCount = 0;
-        foreach (var b in m_InstanceBatches) TotalInstanceCount += b.matrices.Length;
+        // 1. 计算当前帧实际需要的总量
+        int requiredInstanceCount = 0;
+        for (int i = 0; i < batchCount; i++) {
+            requiredInstanceCount += m_InstanceBatches[i].matrices.Length;
+        }
+        TotalInstanceCount = requiredInstanceCount;
 
-        // 释放旧的
-        GlobalInstanceBuffer?.Release();
-        GlobalVisibleBuffer?.Release();
-        GlobalArgsBuffer?.Release();
-        BatchOutputOffsetsBuffer?.Release();
-
-        // 重新分配大池子
-        // 大小计算：matrix(64) + extents(12) + batchIndex(4) = 80 bytes
-        GlobalInstanceBuffer = new ComputeBuffer(TotalInstanceCount, 80, ComputeBufferType.Structured);
-        GlobalVisibleBuffer = new ComputeBuffer(TotalInstanceCount, sizeof(uint), ComputeBufferType.Structured);
-        GlobalArgsBuffer = new ComputeBuffer(m_InstanceBatches.Count * 5, sizeof(uint), ComputeBufferType.IndirectArguments);
-        BatchOutputOffsetsBuffer = new ComputeBuffer(m_InstanceBatches.Count, sizeof(uint), ComputeBufferType.Structured);
-
-        var allInstanceData = new GPUInstanceData[TotalInstanceCount];
-        var allArgs = new uint[m_InstanceBatches.Count * 5];
-        var batchOffsets = new uint[m_InstanceBatches.Count];
-
-        int currentIndex = 0;
-        for (int i = 0; i < m_InstanceBatches.Count; i++) {
-            var batch = m_InstanceBatches[i];
-            batchOffsets[i] = (uint)currentIndex; // 当前批次的起点
-
-            // 填充 Indirect Args
-            allArgs[i * 5 + 0] = batch.mesh.GetIndexCount(0);
-            allArgs[i * 5 + 1] = 0; // GPU 负责计算并填入
-            allArgs[i * 5 + 2] = batch.mesh.GetIndexStart(0);
-            allArgs[i * 5 + 3] = batch.mesh.GetBaseVertex(0);
-            allArgs[i * 5 + 4] = 0;
-
-            // 填充所有实例的数据
-            for (int j = 0; j < batch.matrices.Length; j++) {
-                allInstanceData[currentIndex].matrix = batch.matrices[j];
-                allInstanceData[currentIndex].extents = batch.extents;
-                allInstanceData[currentIndex].batchIndex = (uint)i;
-                currentIndex++;
-            }
+        // 2. 检查并扩容 Instance 相关 Buffer 和 Cache
+        if (requiredInstanceCount > m_CurrentInstanceCapacity) {
+            GlobalInstanceBuffer?.Release();
+            GlobalVisibleBuffer?.Release();
+            
+            // 扩容策略：取 1.5 倍余量
+            m_CurrentInstanceCapacity = Mathf.CeilToInt(requiredInstanceCount * 1.5f);
+            
+            // BufferStride 为 112 bytes
+            GlobalInstanceBuffer = new ComputeBuffer(m_CurrentInstanceCapacity, 112, ComputeBufferType.Structured);
+            // Visible Buffer 每个LOD都需要存储空间, 最坏情况全在一个LOD，因此总大小要 x 3
+            GlobalVisibleBuffer = new ComputeBuffer(m_CurrentInstanceCapacity * 3, sizeof(uint), ComputeBufferType.Structured);
+            m_InstanceDataCache = new GPUInstanceData[m_CurrentInstanceCapacity];
         }
 
-        GlobalInstanceBuffer.SetData(allInstanceData);
-        GlobalArgsBuffer.SetData(allArgs);
-        BatchOutputOffsetsBuffer.SetData(batchOffsets);
+        // 3. 检查并扩容 Batch 相关 Buffer (每个 Batch 有 3 个子 LOD Batches)
+        if (batchCount > m_CurrentBatchCapacity) {
+            GlobalArgsBuffer?.Release();
+            BatchOutputOffsetsBuffer?.Release();
+
+            m_CurrentBatchCapacity = Mathf.CeilToInt(batchCount * 1.5f);
+            int totalSubBatches = m_CurrentBatchCapacity * 3;
+
+            GlobalArgsBuffer = new ComputeBuffer(totalSubBatches * 5, sizeof(uint), ComputeBufferType.IndirectArguments);
+            BatchOutputOffsetsBuffer = new ComputeBuffer(totalSubBatches, sizeof(uint), ComputeBufferType.Structured);
+            
+            m_ArgsCache = new uint[totalSubBatches * 5];
+            m_OffsetCache = new uint[totalSubBatches];
+        }
+
+        // 4. 填充数据
+        int currentIndex = 0;
+        int currentInstanceBase = 0;
+        for (int i = 0; i < batchCount; i++) {
+            var batch = m_InstanceBatches[i];
+            int batchLen = batch.matrices.Length;
+
+            // 拆分为 3 个子 Batch 处理 LOD 0, 1, 2
+            for (int lod = 0; lod < 3; lod++) {
+                int subBatchIdx = i * 3 + lod;
+                // 分配此子LOD能用的输出空间上限
+                m_OffsetCache[subBatchIdx] = (uint)(currentInstanceBase + batchLen * lod); 
+
+                // 填充 Indirect Args
+                int argBase = subBatchIdx * 5;
+                if (batch.meshes[lod] != null) {
+                    m_ArgsCache[argBase + 0] = batch.meshes[lod].GetIndexCount(0);
+                    m_ArgsCache[argBase + 1] = 0; // 实例数量 (由CS Atomic 追加)
+                    m_ArgsCache[argBase + 2] = batch.meshes[lod].GetIndexStart(0);
+                    m_ArgsCache[argBase + 3] = batch.meshes[lod].GetBaseVertex(0);
+                    m_ArgsCache[argBase + 4] = 0;
+                } else {
+                    m_ArgsCache[argBase + 0] = 0;
+                    m_ArgsCache[argBase + 1] = 0;
+                    m_ArgsCache[argBase + 2] = 0;
+                    m_ArgsCache[argBase + 3] = 0;
+                    m_ArgsCache[argBase + 4] = 0;
+                }
+            }
+
+            // 填充实例数据
+            Vector3 extents = batch.extents;
+            uint bIndex = (uint)i;
+
+            for (int j = 0; j < batchLen; j++) {
+                m_InstanceDataCache[currentIndex].matrix = batch.matrices[j];
+                m_InstanceDataCache[currentIndex].blockData = batch.blocks != null && j < batch.blocks.Length ? batch.blocks[j] : Vector4.zero;
+                m_InstanceDataCache[currentIndex].extents = extents;
+                m_InstanceDataCache[currentIndex].batchIndex = bIndex;
+                m_InstanceDataCache[currentIndex].lodDistances = batch.lodDistances;
+                currentIndex++;
+            }
+            
+            currentInstanceBase += batchLen * 3;
+        }
+
+        // 5. 上传数据
+        GlobalInstanceBuffer.SetData(m_InstanceDataCache, 0, 0, requiredInstanceCount);
+        GlobalArgsBuffer.SetData(m_ArgsCache, 0, 0, batchCount * 15);
+        BatchOutputOffsetsBuffer.SetData(m_OffsetCache, 0, 0, batchCount * 3);
     }
-    
     
     // 更新全局摄像机数据
     public HizCameraContext GetCameraContext(Camera camera, RenderingData data) {

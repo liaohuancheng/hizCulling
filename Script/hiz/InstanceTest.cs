@@ -1,8 +1,7 @@
+
 using UnityEngine;
 using UnityEngine.Rendering;
 using System.Collections.Generic;
-
-
 
 public class HizInstDebugController : MonoBehaviour
 {
@@ -13,7 +12,7 @@ public class HizInstDebugController : MonoBehaviour
     public List<InstanceConfig> Configs = new List<InstanceConfig>();
 
     [Header("UI 按钮大小")]
-    public Vector2 buttonSize = new Vector2(220, 50);
+    public Vector2 buttonSize = new Vector2(240, 50);
 
     // 用于管理当前生成的所有批次
     private List<HizInstanceBatch> m_Batches = new List<HizInstanceBatch>();
@@ -21,6 +20,7 @@ public class HizInstDebugController : MonoBehaviour
     private void Start()
     {
         Application.targetFrameRate = 120;
+        // 确保禁用 SRP Batcher 以免干扰底层 Buffer 绑定（根据你的实现而定）
         GraphicsSettings.useScriptableRenderPipelineBatching = false;
         
         if (camTrans == null) camTrans = Camera.main.transform;
@@ -36,7 +36,7 @@ public class HizInstDebugController : MonoBehaviour
         // --- Hi-Z 开关 ---
         bool isEnabled = HizCullingMgr.Instance.IsEnable;
         GUI.backgroundColor = isEnabled ? Color.green : Color.red;
-        if (GUI.Button(new Rect(x, y, buttonSize.x, buttonSize.y), isEnabled ? "Hi-Z: 开启中" : "Hi-Z: 已关闭", btnStyle))
+        if (GUI.Button(new Rect(x, y, buttonSize.x, buttonSize.y), isEnabled ? "Hi-Z + GPU LOD: 开启" : "Hi-Z: 已关闭", btnStyle))
         {
             if (isEnabled) HizCullingMgr.Instance.Close();
             else HizCullingMgr.Instance.Open();
@@ -49,7 +49,7 @@ public class HizInstDebugController : MonoBehaviour
         // --- 生成多批次 Instance ---
         y += buttonSize.y + spacing;
         GUI.backgroundColor = Color.cyan;
-        if (GUI.Button(new Rect(x, y, buttonSize.x, buttonSize.y), $"生成 {totalToSpawn} 个 GPU 实例", btnStyle))
+        if (GUI.Button(new Rect(x, y, buttonSize.x, buttonSize.y), $"生成 {totalToSpawn} 个实例", btnStyle))
         {
             SpawnGPUInstances();
         }
@@ -64,94 +64,114 @@ public class HizInstDebugController : MonoBehaviour
         
         // --- 状态显示 ---
         y += buttonSize.y + spacing;
-        GUI.Label(new Rect(x, y, 300, 30), $"当前运行批次 (Batch) 数量: {m_Batches.Count}", new GUIStyle { fontSize = 16, normal = new GUIStyleState { textColor = Color.white } });
+        var style = new GUIStyle { fontSize = 16 };
+        style.normal.textColor = Color.white;
+        GUI.Label(new Rect(x, y, 400, 30), $"当前 Batch 数量: {m_Batches.Count}", style);
+        y += 25;
+        GUI.Label(new Rect(x, y, 400, 30), $"显存占用 (仅矩阵): ~{(totalToSpawn * 112) / (1024f * 1024f):F2} MB", style);
     }
 
     private void SpawnGPUInstances()
     {
-        ClearGPUInstances(); // 先清空旧的
+        ClearGPUInstances();
 
-        if (Configs == null || Configs.Count == 0)
-        {
-            Debug.LogWarning("配置列表为空！请在 Inspector 面板中添加 Configs。");
-            return;
-        }
+        if (Configs == null || Configs.Count == 0) return;
 
         var camForward = camTrans.forward;
         var camPos = camTrans.position;
         int totalSpawned = 0;
 
-        // 遍历所有配置的种类
         foreach (var config in Configs)
         {
-            if (config.InstanceMesh == null || config.InstanceMaterial == null)
-            {
-                Debug.LogWarning($"[{config.Name}] 的 Mesh 或 Material 未配置，跳过生成。");
-                continue;
-            }
+            // 准备 LOD 数组
+            Mesh[] lodMeshes = new Mesh[3] { config.LOD0_Mesh, config.LOD1_Mesh, config.LOD2_Mesh };
+            Material[] lodMats = new Material[3] { config.LOD0_Material, config.LOD1_Material, config.LOD2_Material };
 
-            // 为当前种类生成纯数据矩阵
+            if (lodMeshes[0] == null || lodMats[0] == null) continue;
+
             Matrix4x4[] matrices = new Matrix4x4[config.SpawnCount];
+            Vector4[] blocks = new Vector4[config.SpawnCount];
+
             for (int i = 0; i < config.SpawnCount; i++)
             {
-                // 在相机前方扇形区域生成
-                Vector3 randomDir = (camForward + Random.insideUnitSphere * 1.5f).normalized;
-                float dist = Random.Range(10, config.SpawnRadius);
-                Vector3 spawnPos = camPos + randomDir * dist;
-                spawnPos.y = 0; // 铺在地上方便观察
+                // 分布算法：在相机周围随机生成
+                Vector2 randCircle = Random.insideUnitCircle * config.SpawnRadius;
+                Vector3 spawnPos = camPos + new Vector3(randCircle.x, 0, randCircle.y);
+                spawnPos.y = 0; 
 
                 Quaternion rot = Quaternion.Euler(0, Random.Range(0, 360), 0);
                 Vector3 scale = Vector3.one * Random.Range(config.MinScale, config.MaxScale);
-                
                 matrices[i] = Matrix4x4.TRS(spawnPos, rot, scale);
+
+                // 生成随机 blockData (例如：x=随机颜色偏移, y=随机动画相位)
+                blocks[i] = new Vector4(Random.value, Random.value, Random.value, Random.value);
             }
 
-            // 为当前种类创建专属的 GPU Batch
-            var batch = new HizInstanceBatch(config.InstanceMesh, config.InstanceMaterial, matrices);
+            // 构造新的多 LOD Batch
+            // lodDistances 参数: x=LOD0距离, y=LOD1距离, z=LOD2距离, w=密度(1.0)
+            Vector4 lodDistances = new Vector4(config.LOD0_Distance, config.LOD1_Distance, config.LOD2_Distance, 1.0f);
             
-            // 交给管理器调度
+            // 包围盒大小以 LOD0 为准
+            Vector3 extents = lodMeshes[0].bounds.extents;
+
+            var batch = new HizInstanceBatch(
+                lodMeshes, 
+                lodMats, 
+                lodDistances, 
+                extents, 
+                matrices, 
+                blocks
+            );
+            
             HizCullingMgr.Instance.AddInstanceBatch(batch);
-            
-            // 测试脚本自己也要存一份，方便等会清理
             m_Batches.Add(batch);
             totalSpawned += config.SpawnCount;
         }
         
-        Debug.Log($"<color=cyan>成功生成 {totalSpawned} 个 GPU 实例，共 {m_Batches.Count} 个 Batch。</color>");
+        Debug.Log($"<color=cyan><b>[HizTest]</b></color> 已生成 {totalSpawned} 个实例。通过 GPU LOD 分流。");
     }
 
     private void ClearGPUInstances()
     {
         if (m_Batches.Count > 0)
         {
+            // 清理管理器中的引用
             foreach (var batch in m_Batches)
             {
-                // 1. 从管理器中剔除
                 HizCullingMgr.Instance.GetInstanceBatches().Remove(batch);
-                // 2. 释放 GPU 显存 Buffer
                 batch.Dispose();
             }
             m_Batches.Clear();
-            Debug.Log("<color=white>GPU 实例已全部清空并释放显存</color>");
+            Debug.Log("已清理所有实例");
         }
     }
 
-    private void OnDestroy() 
-    { 
-        // 保证在退出游戏时不会发生显存泄漏
-        ClearGPUInstances(); 
-    }
+    private void OnDestroy() { ClearGPUInstances(); }
 }
-// 序列化配置类：用于在面板上配置多种不同的物体
+
 [System.Serializable]
 public class InstanceConfig
 {
-    public string Name = "物体种类 (如: 树/草/石头)";
-    public Mesh InstanceMesh;
-    public Material InstanceMaterial; // 【必须】使用支持 IndirectBuffer 的那个 Shader
+    public string Name = "新物体";
     
-    public int SpawnCount = 10000;   // 这个种类的生成数量
-    public float SpawnRadius = 200f; // 分布半径
-    public float MinScale = 0.5f;    // 最小缩放
-    public float MaxScale = 2.0f;    // 最大缩放
+    [Header("LOD 0 (高模)")]
+    public Mesh LOD0_Mesh;
+    public Material LOD0_Material;
+    public float LOD0_Distance = 30f;
+
+    [Header("LOD 1 (中模)")]
+    public Mesh LOD1_Mesh;
+    public Material LOD1_Material;
+    public float LOD1_Distance = 80f;
+
+    [Header("LOD 2 (低模/告示板)")]
+    public Mesh LOD2_Mesh;
+    public Material LOD2_Material;
+    public float LOD2_Distance = 200f;
+
+    [Space]
+    public int SpawnCount = 5000;
+    public float SpawnRadius = 150f;
+    public float MinScale = 0.8f;
+    public float MaxScale = 1.2f;
 }

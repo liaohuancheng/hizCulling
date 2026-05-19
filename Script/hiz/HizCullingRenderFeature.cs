@@ -221,10 +221,12 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
             SetupCommonParams(cmd, cullCS, m_Ctx, renderingData);
 
             // ================= 阶段 1：极速清零参数池 =================
+            // 注意：现在有 3 倍的 sub-batch 数量
             int kernelClear = cullCS.FindKernel("CSClearArgs");
+            int totalSubBatches = mgr.GetInstanceBatches().Count * 3;
             cmd.SetComputeBufferParam(cullCS, kernelClear, "_GlobalArgsBuffer", mgr.GlobalArgsBuffer);
-            cmd.SetComputeIntParam(cullCS, "_BatchCount", mgr.GetInstanceBatches().Count);
-            cmd.DispatchCompute(cullCS, kernelClear, Mathf.Max(1, Mathf.CeilToInt(mgr.GetInstanceBatches().Count / 64f)), 1, 1);
+            cmd.SetComputeIntParam(cullCS, "_BatchCount", totalSubBatches);
+            cmd.DispatchCompute(cullCS, kernelClear, Mathf.Max(1, Mathf.CeilToInt(totalSubBatches / 64f)), 1, 1);
 
             // ================= 阶段 2：全量合批剔除 =================
             int kernelCull = cullCS.FindKernel("CSMain_GlobalInstance");
@@ -252,20 +254,26 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
 
             var cmd = CommandBufferPool.Get("HizDraw_GlobalInstance");
             
-            uint currentOffset = 0;
+            uint currentVisibleOffset = 0;
             for(int i = 0; i < batches.Count; i++) {
                 var batch = batches[i];
-                if (batch.matrices.Length <= 0) continue;
+                int batchLen = batch.matrices.Length;
+                if (batchLen <= 0) continue;
 
-                // 哪个位置开始
-                batch.material.SetInt(BatchVisibleOffset, (int)currentOffset);
-                batch.material.SetBuffer(GlobalVisibleIndexBuffer, mgr.GlobalVisibleBuffer);
-                batch.material.SetBuffer(GlobalInstanceDataBuffer, mgr.GlobalInstanceBuffer);
-                
-                // 【核心】：大家用同一个 ArgsBuffer，但通过偏移量取各自的数据 (i * 20 字节)
-                cmd.DrawMeshInstancedIndirect(batch.mesh, 0, batch.material, 0, mgr.GlobalArgsBuffer, i * 20);
-
-                currentOffset += (uint)batch.matrices.Length;
+                for(int lod = 0; lod < 3; lod++) {
+                    if (batch.meshes[lod] != null && batch.materials[lod] != null) {
+                        // 算出这个子 LOD 专属的位置
+                        uint offset = currentVisibleOffset + (uint)(batchLen * lod);
+                        
+                        batch.materials[lod].SetInt(BatchVisibleOffset, (int)offset);
+                        batch.materials[lod].SetBuffer(GlobalVisibleIndexBuffer, mgr.GlobalVisibleBuffer);
+                        batch.materials[lod].SetBuffer(GlobalInstanceDataBuffer, mgr.GlobalInstanceBuffer);
+                        
+                        // Args Buffer 每一个结构占 5个 uint(20 bytes)
+                        cmd.DrawMeshInstancedIndirect(batch.meshes[lod], 0, batch.materials[lod], 0, mgr.GlobalArgsBuffer, (i * 3 + lod) * 20);
+                    }
+                }
+                currentVisibleOffset += (uint)(batchLen * 3);
             }
 
             context.ExecuteCommandBuffer(cmd);

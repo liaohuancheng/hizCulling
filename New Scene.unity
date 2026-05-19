@@ -324,31 +324,17 @@ MonoBehaviour:
   camTrans: {fileID: 134876688}
   Configs:
   - Name: 1
-    InstanceMesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
-    InstanceMaterial: {fileID: 2100000, guid: 5a6f2f5e75d02734b9f15b2d0eb2c097, type: 2}
-    SpawnCount: 1000
-    SpawnRadius: 100
-    MinScale: 3
-    MaxScale: 1
-  - Name: 2
-    InstanceMesh: {fileID: 10208, guid: 0000000000000000e000000000000000, type: 0}
-    InstanceMaterial: {fileID: 2100000, guid: 43ef4edf4b5ec6d489773c27a3419b6b, type: 2}
-    SpawnCount: 1000
-    SpawnRadius: 100
-    MinScale: 3
-    MaxScale: 1
-  - Name: 3
-    InstanceMesh: {fileID: 10206, guid: 0000000000000000e000000000000000, type: 0}
-    InstanceMaterial: {fileID: 2100000, guid: 6c1fef516009f4b41a87411f4badfa7f, type: 2}
-    SpawnCount: 1000
-    SpawnRadius: 100
-    MinScale: 3
-    MaxScale: 1
-  - Name: 4
-    InstanceMesh: {fileID: 8984044216318202677, guid: 827845ac98dc9ba479b6b97f5bbc04aa,
+    LOD0_Mesh: {fileID: 8984044216318202677, guid: 827845ac98dc9ba479b6b97f5bbc04aa,
       type: 3}
-    InstanceMaterial: {fileID: 2100000, guid: 01425867c47b2424c9864cded192b33f, type: 2}
-    SpawnCount: 1000
+    LOD0_Material: {fileID: 2100000, guid: 5a6f2f5e75d02734b9f15b2d0eb2c097, type: 2}
+    LOD0_Distance: 30
+    LOD1_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+    LOD1_Material: {fileID: 2100000, guid: 43ef4edf4b5ec6d489773c27a3419b6b, type: 2}
+    LOD1_Distance: 80
+    LOD2_Mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+    LOD2_Material: {fileID: 2100000, guid: 01425867c47b2424c9864cded192b33f, type: 2}
+    LOD2_Distance: 200
+    SpawnCount: 10000
     SpawnRadius: 100
     MinScale: 3
     MaxScale: 1
