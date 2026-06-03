@@ -133,9 +133,9 @@ GameObject:
   - component: {fileID: 134876688}
   - component: {fileID: 134876687}
   - component: {fileID: 134876686}
+  - component: {fileID: 134876696}
   - component: {fileID: 134876689}
   - component: {fileID: 134876690}
-  - component: {fileID: 134876691}
   - component: {fileID: 134876694}
   - component: {fileID: 134876695}
   m_Layer: 0
@@ -212,13 +212,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 134876685}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.01678123, y: 0.90334654, z: -0.035492577, w: -0.42711088}
-  m_LocalPosition: {x: 77.05415, y: 10.835321, z: -211.28923}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: -256.69, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &134876689
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -277,26 +277,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   Camera: {fileID: 134876687}
   Setting: {fileID: 11400000, guid: f80459266e5dc7d42b65ddc1595d4717, type: 2}
---- !u!114 &134876691
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 134876685}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b6506e089d659a84f9ff12313051a2e1, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  moveSpeed: 10
-  sprintMultiplier: 3
-  lookSensitivity: 2
-  scrollSensitivity: 5
-  mobileLookSensitivity: 0.5
-  mobileMoveSensitivity: 0.05
-  smoothMovement: 1
-  smoothTime: 0.1
 --- !u!114 &134876694
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -339,6 +319,26 @@ MonoBehaviour:
     MinScale: 3
     MaxScale: 1
   buttonSize: {x: 220, y: 50}
+--- !u!114 &134876696
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 134876685}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c18c9823f34b6314bbc31eb5286defe8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  moveSpeed: 10
+  sprintMultiplier: 3
+  lookSensitivity: 2
+  scrollSensitivity: 5
+  mobileLookSensitivity: 0.5
+  mobileMoveSensitivity: 0.05
+  smoothMovement: 1
+  smoothTime: 0.1
 --- !u!1001 &345733423
 PrefabInstance:
   m_ObjectHideFlags: 0

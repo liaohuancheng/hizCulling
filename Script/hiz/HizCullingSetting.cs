@@ -19,6 +19,9 @@ public class HizCullingSetting : ScriptableObject {
     [Header("回读可见性 RT 的大小，可以同时处理 size ^ 2 的物体数量，默认为 16")]
     public HizAABBRtSize Size = HizAABBRtSize.x16;
     
+    
+    [Header("开启 CPU-GPU 混合下标过滤剔除")]
+    public bool UseFilteredCulling;
     public Material HizMat;
 
     public bool DebugDrawCullObj;

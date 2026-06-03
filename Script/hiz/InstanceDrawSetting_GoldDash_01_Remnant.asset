@@ -1,0 +1,526 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7884f0b0676b6b943888e9170547dab0, type: 3}
+  m_Name: InstanceDrawSetting_GoldDash_01_Remnant
+  m_EditorClassIdentifier: 
+  OriginalPos: 0
+  TileWidth: 200
+  TileHeight: 200
+  InstanceDrawMaxCount: 1023
+  BinPath: Txt/GPUGrass/RemnantInstance.txt
+  UseComputeShader: 1
+  DrawTypeDatas:
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 0
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 4f46b8502e1333445b7173f1b383c523, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 8449178469960957102, guid: 1590603b94a189e428bfea6344d6129c,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 1
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 20ec1bc5c1be5e0469b0246fd07ab970, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -3632412626250207000, guid: 3d199a6b31c1cfe48b3ce1c2a2808b1f,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 2
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 20ec1bc5c1be5e0469b0246fd07ab970, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -8121741213141185939, guid: de36d1fb3e3e87d40840ba25608fb754,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 3
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 20ec1bc5c1be5e0469b0246fd07ab970, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -5937822919224212983, guid: c6e691106dc13b44c96b499be375e969,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 4
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 30d5927fa8aec3143ab6c654ddb282c9, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 2148769611574866305, guid: efa734ef05a2b824ea47fbc8288a318f,
+        type: 3}
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 0}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 0}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 5
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 0
+      Interactive: 0
+      Density: 1
+      PropertyName: 
+      Mat: {fileID: 2100000, guid: 9b588f3f31683a54e866e44effb6ac7d, type: 2}
+      DepthOnlyMat: {fileID: 2100000, guid: 620073367ae7b5c44af38b8808f370cd, type: 2}
+      Mesh: {fileID: -104566151142954142, guid: 5f33b71a643c2ee40bb603a92bbc3447,
+        type: 3}
+    - ShadowMode: 0
+      HasBlock: 0
+      Interactive: 0
+      Density: 1
+      PropertyName: 
+      Mat: {fileID: 2100000, guid: f439d13a6229f05408fcf7264066e138, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 9140961610603313914, guid: 79b2ac03ac342b346b9f6b50d865cbde,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 6
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 41dd1d8be9fd41d4cb711383e19de561, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 7889924534132141232, guid: c8559955615ac5a43b047116f91cf2ca,
+        type: 3}
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 0}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 0}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 7
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 0
+      Interactive: 0
+      Density: 1
+      PropertyName: 
+      Mat: {fileID: 2100000, guid: 77e701dd4519af545923ccf61cb8f7f8, type: 2}
+      DepthOnlyMat: {fileID: 2100000, guid: 1a42d07c254ad994a9882620c44ceedd, type: 2}
+      Mesh: {fileID: 3757549640016289211, guid: 031a5c8185c6b694586ac7d779afe443,
+        type: 3}
+    - ShadowMode: 0
+      HasBlock: 0
+      Interactive: 0
+      Density: 1
+      PropertyName: 
+      Mat: {fileID: 2100000, guid: f439d13a6229f05408fcf7264066e138, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -2129101039715754188, guid: d46625cfa69e02f44b7a3b50b0214b96,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 8
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 0
+      Interactive: 0
+      Density: 1
+      PropertyName: 
+      Mat: {fileID: 2100000, guid: 3e3bbb01aa617b74681ee25dc8319a1d, type: 2}
+      DepthOnlyMat: {fileID: 2100000, guid: 620073367ae7b5c44af38b8808f370cd, type: 2}
+      Mesh: {fileID: 2768031893055853306, guid: 0115553a01027c443aabd5f17568735b,
+        type: 3}
+    - ShadowMode: 0
+      HasBlock: 0
+      Interactive: 0
+      Density: 1
+      PropertyName: 
+      Mat: {fileID: 2100000, guid: f439d13a6229f05408fcf7264066e138, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 7041625988860750095, guid: 6b0a8ee34b6b1a44188adecde6c75563,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 9
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 5414863c5ef8e064792bc1da441a9b32, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 7148987251401094235, guid: 2ef20919c8f6bc64a8b1322cf2f3b383,
+        type: 3}
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 0}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 0}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 10
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: e2a247726cd044e458fab58c8319b22c, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -1427969333040551873, guid: 0f4c9bda8df59c2429dd587954c16b25,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 11
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: a609a8ed8f7d3fc4b947d166d16131dd, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -5998926379910215651, guid: c0cc300d692b32d4e954cbbdf00b91df,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 12
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: e2a247726cd044e458fab58c8319b22c, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 2707938728436448304, guid: 87363e2b1980444468629221f74b8171,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 13
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: a609a8ed8f7d3fc4b947d166d16131dd, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -1475275676941499383, guid: 81addd2d36d6d67459da2d4c6d39186b,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 14
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: d1824e0224fa94041a43e2740be58d65, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -6244613600950020062, guid: a98d5dbbb3e0c0a4a825c30283b5a6ca,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 15
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 1
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: fc70432d0343ba14a8a8620072f153bf, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 8915038595360031831, guid: 44ab52ad569e2c84eb5812ffba20ffd7,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 16
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: d86a128c80e68bd42b0a27587e37c71b, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 4763604705084855981, guid: e366935fea9230e41bb0a66c84e65e17,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 17
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: d86a128c80e68bd42b0a27587e37c71b, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 157296679921513484, guid: 427d52a7ff3962b4ba14af580abe8d6b, type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 18
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 109213b08e347e84798a51d06948e627, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 7320542581206180671, guid: eb158e836ce8a724bb39fbe643e348bc,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 19
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 109213b08e347e84798a51d06948e627, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 857208745441881763, guid: 7af64f07e30bafa42a21e49731ac55d5, type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 20
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 3e0a1d442145b7a4687cb994eb8ebe4a, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -7606513690319313114, guid: 11482c371249a1a47896263dcca60a1e,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 21
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 3e0a1d442145b7a4687cb994eb8ebe4a, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 2553458187175926313, guid: 36246be429cccfa4084e49e4ebc3d2e1,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 22
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 3e0a1d442145b7a4687cb994eb8ebe4a, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 8396158992987068481, guid: 660ee06d27e0f5f42b49b242a78ef528,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 23
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 3e0a1d442145b7a4687cb994eb8ebe4a, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -8953568560949897664, guid: a703b85eacf4c844d8b367335a71f69d,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 24
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 2b72be051b9afec4bb9b2723e6294ae9, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -7254020110162037991, guid: 01dfe9e7649d32e4a82a9b62773388c6,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 25
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 1
+      Interactive: 0
+      Density: 0
+      PropertyName: _LightMapBlcok_ST
+      Mat: {fileID: 2100000, guid: 109213b08e347e84798a51d06948e627, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 4972808111448519325, guid: 685aaa2ccc863d747ab68dd187490e02,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 2
+    InstanceType: 26
+    CullGroupID: 0
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 0
+      Interactive: 0
+      Density: 1
+      PropertyName: 
+      Mat: {fileID: 2100000, guid: 345084778c39b6c4a9bd111203cbda40, type: 2}
+      DepthOnlyMat: {fileID: 2100000, guid: 089a42d5752e6754ab10d69e001713b7, type: 2}
+      Mesh: {fileID: 2440841999826167236, guid: ef3b091a6c030e0419d29f4a0aeb3c5f,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 1
+    InstanceType: 27
+    CullGroupID: 1
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 0
+      Interactive: 0
+      Density: 0.8
+      PropertyName: 
+      Mat: {fileID: 2100000, guid: 00fb140c4de539f4a878a9f23a11db93, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: 7062237099839373373, guid: 92c0d722007dab64297a04c60fe89350,
+        type: 3}
+  - IsFading: 0
+    FadingInterval: 0
+    ScalePrecision: 1
+    InstanceType: 28
+    CullGroupID: 1
+    LODs:
+    - ShadowMode: 0
+      HasBlock: 0
+      Interactive: 0
+      Density: 0.8
+      PropertyName: 
+      Mat: {fileID: 2100000, guid: 2bbbfe00d612c9540bc248a857a67d16, type: 2}
+      DepthOnlyMat: {fileID: 0}
+      Mesh: {fileID: -3719081447634775922, guid: 47c065a29725b2b48896def3e216b5e2,
+        type: 3}
+  CullGroups:
+  - ShowGizmos: 0
+    GroupID: 0
+    IsFading: 0
+    RangeLOD0: 150
+    RangeLOD1: 200
+    RangeLOD2: 200
+    FrutumCullExternal: 10
+    BoundSizeY: 100
+    CullFrustum: 1
+    CullDistance: 1
+  - ShowGizmos: 0
+    GroupID: 1
+    IsFading: 0
+    RangeLOD0: 50
+    RangeLOD1: 50
+    RangeLOD2: 50
+    FrutumCullExternal: 0
+    BoundSizeY: 5
+    CullFrustum: 1
+    CullDistance: 1

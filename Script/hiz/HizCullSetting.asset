@@ -12,13 +12,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f7ed90f47205c6f4cac1a9ddae588c0d, type: 3}
   m_Name: HizCullSetting
   m_EditorClassIdentifier: 
-  Enalbe: 0
+  Enalbe: 1
   HizMipCS: {fileID: 7200000, guid: d68c259c2175d0044909bf31f08831e8, type: 3}
   HizCullCS: {fileID: 7200000, guid: 92012713fa179fd408f3466bcf248de7, type: 3}
   MaxMipLevel: 1
   MinMipResolutionSize: 2
   HizInfoBufferCount: 3
   Size: 64
+  UseFilteredCulling: 0
   HizMat: {fileID: 2100000, guid: ee0c794c353792c4fbecaaaeb437cce1, type: 2}
   DebugDrawCullObj: 1
   DebugLogWate: 0

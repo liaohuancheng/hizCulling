@@ -108,12 +108,24 @@ public class HizReadbackBuffer {
             return;
         }
         var data = request.GetData<uint>();
+        bool stateChanged = false; // 用于检测是否有遮挡状态实质性改变
+        
         for (int i = 0; i < ActiveCount; i++) {
             var cullable = CullableSnapshots[i];
+            
+            bool oldState = cullable.IsCull();
+            bool newState = (data[i] == 1);
+            if (oldState != newState) {
+                stateChanged = true;
+            }
+            
             if (data[i] == 1) cullable.OnCulled();
             else cullable.OnVisible();
         }
         
+        if (stateChanged) {
+            HizCullingMgr.HizStateDirty = true;
+        }
         
         if (HizCullingMgr.Instance.Setting != null && HizCullingMgr.Instance.Setting.DebugLogBack) {
             Debug.Log($"<color=#64FF5A><b>BACK▶</b></color> Frame : {Time.frameCount} , ID :{ID} , Time : {Time.unscaledTime}, RequestFrame : {RequestFrameCount} ");

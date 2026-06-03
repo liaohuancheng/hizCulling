@@ -7,7 +7,7 @@ using UnityEngine;
 public class HizCullingMono : MonoBehaviour {
     public Camera Camera;
     public HizCullingSetting Setting;
-    private void Start() {
+    private void Awake() {
         HizCullingMgr.Instance.Init(Camera,Setting);
         HizCullingMgr.Instance.Open();
     }

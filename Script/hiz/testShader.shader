@@ -16,7 +16,7 @@ Shader "Custom/HizInstanceRendering"
             #pragma fragment frag
             // 必须开启实例化
             #pragma multi_compile_instancing
-
+            #pragma enable_d3d11_debug_symbols
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
             struct Attributes

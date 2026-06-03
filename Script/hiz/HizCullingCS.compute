@@ -2,6 +2,7 @@
 #pragma kernel CSMain_Standard
 #pragma kernel CSMain_GlobalInstance
 #pragma kernel CSClearArgs
+#pragma kernel CSMain_GlobalInstance_Filtered 
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
 Texture2D<float> _HizMipAtlas;
@@ -174,5 +175,51 @@ void CSMain_GlobalInstance(uint3 id : SV_DispatchThreadID) {
         // 写入位置 = 子批次在总缓冲区中的基准偏移 + 刚才累加得到的序号
         uint writeOffset = _BatchOutputOffsets[subBatchIdx] + count;
         _GlobalVisibleIndexBuffer[writeOffset] = id.x;
+    }
+}
+
+// [新增绑定] 用于接收 CPU 过滤后下标的缓冲区
+StructuredBuffer<uint> _InputIndicesBuffer;
+uint _CPUFilteredCount;
+[numthreads(64, 1, 1)]
+void CSMain_GlobalInstance_Filtered(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= _CPUFilteredCount) return;
+
+    // 1. 拿到 CPU 传过来的打包数据
+    uint packedData = _InputIndicesBuffer[id.x];
+    
+    // 2. 【核心修改】：位解包
+    // 取高 2 位得到 LOD 等级 (0, 1, 2)
+    uint lodLevel = packedData >> 30;
+    // 取低 30 位得到真实的全局实例 ID
+    uint instanceId = packedData & 0x3FFFFFFF;
+    
+    // 取出真实数据
+    GPUInstanceData data = _GlobalInstanceDataBuffer[instanceId];
+    
+    // 3. 获取世界坐标中心 (还原 C# 内存布局)
+    float3 worldPos = float3(data._matrix._m03, data._matrix._m13, data._matrix._m23);
+
+    // 4. 计算缩放后的包围盒 (用于 Hiz 剔除测试)
+    float3 scale = float3(
+        length(float3(data._matrix._m00, data._matrix._m10, data._matrix._m20)),
+        length(float3(data._matrix._m01, data._matrix._m11, data._matrix._m21)),
+        length(float3(data._matrix._m02, data._matrix._m12, data._matrix._m22))
+    );
+    float3 worldExtent = data.extents * scale;
+
+    // 5. Hiz 精确遮挡测试
+    if (CheckVisable(worldPos, worldExtent)) {
+        // 直接使用解包出来的 CPU lodLevel，不再计算距离！
+        uint subBatchIdx = data.batchIndex * 3 + lodLevel;
+        uint argsInstanceCountPos = subBatchIdx * 5 + 1;
+        
+        // 6. 原子累加实例计数
+        uint count;
+        InterlockedAdd(_GlobalArgsBuffer[argsInstanceCountPos], 1, count);
+
+        // 7. 写入可见索引列表
+        uint writeOffset = _BatchOutputOffsets[subBatchIdx] + count;
+        _GlobalVisibleIndexBuffer[writeOffset] = instanceId;
     }
 }

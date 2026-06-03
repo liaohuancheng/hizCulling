@@ -127,7 +127,7 @@ public class HizInstDebugController : MonoBehaviour
             m_Batches.Add(batch);
             totalSpawned += config.SpawnCount;
         }
-        
+        HizCullingMgr.Instance.BuildGlobalBuffers();
         Debug.Log($"<color=cyan><b>[HizTest]</b></color> 已生成 {totalSpawned} 个实例。通过 GPU LOD 分流。");
     }
 
