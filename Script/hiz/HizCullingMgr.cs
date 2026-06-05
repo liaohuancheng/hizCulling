@@ -16,6 +16,12 @@ public class HizCullingMgr {
     public static bool HizStateDirty = false; 
     public bool IsEnable => Setting != null && Setting.Enalbe;
     public HizCullingSetting Setting;
+    
+    // 动态宽度记录，取代写死的常数，提供更优的 cache 命中率
+    public int CurrentTexWidth { get; private set; } = 128;
+    
+    // CPU 数据极速直传 GPU 的临时上传缓冲区
+    private ComputeBuffer m_InstanceUploadBuffer;
 
     // 全局数据
     public Vector4[] MasterAABBCenters;
@@ -23,9 +29,11 @@ public class HizCullingMgr {
     private List<IHizCullable> m_HizCullableList;
     private Camera m_Camera;
     
+    // --- 纹理化替换核心缓存 ---
+    public RenderTexture GlobalInstanceDataTex;
+    public RenderTexture GlobalVisibleIndexTex;
+    
     // --- 全局 Mega Buffers ---
-    public ComputeBuffer GlobalInstanceBuffer;
-    public ComputeBuffer GlobalVisibleBuffer;
     public ComputeBuffer GlobalArgsBuffer;
     public ComputeBuffer BatchOutputOffsetsBuffer;
     public int TotalInstanceCount = 0;
@@ -80,61 +88,95 @@ public class HizCullingMgr {
         int batchCount = m_InstanceBatches.Count;
         if (batchCount == 0) return;
     
-        // 1. 计算当前帧实际需要的总量
         int requiredInstanceCount = 0;
         for (int i = 0; i < batchCount; i++) {
             requiredInstanceCount += m_InstanceBatches[i].matrices.Length;
         }
         TotalInstanceCount = requiredInstanceCount;
+        
+        // 1. 寻找最合适标准 POT 正方形尺寸
+        int totalPixels = requiredInstanceCount * 7;
+        int size = 128;
+        while (size * size < totalPixels) {
+            size *= 2; 
+        }
+        CurrentTexWidth = size;
+        int texHeight = size;
     
-        // 2. 检查并扩容 Instance 相关 Buffer 和 Cache
-        if (requiredInstanceCount > m_CurrentInstanceCapacity) {
-            GlobalInstanceBuffer?.Release();
-            GlobalVisibleBuffer?.Release();
+        // 2. 使用 RenderTextureDescriptor 确保可靠启用 UAV (Random Write)
+        if (GlobalInstanceDataTex == null || GlobalInstanceDataTex.width != CurrentTexWidth || GlobalInstanceDataTex.height != texHeight) {
+            if (GlobalInstanceDataTex != null) {
+                GlobalInstanceDataTex.Release();
+            }
             
-            // 扩容策略：取 1.5 倍余量
-            m_CurrentInstanceCapacity = Mathf.CeilToInt(requiredInstanceCount * 1.5f);
+            RenderTextureDescriptor desc = new RenderTextureDescriptor(
+                CurrentTexWidth, 
+                texHeight, 
+                UnityEngine.Experimental.Rendering.GraphicsFormat.R32G32B32A32_SFloat, 
+                0
+            );
+            desc.enableRandomWrite = true; // 显式且安全地开启 UAV 支持
             
-            // BufferStride 为 112 bytes
-            GlobalInstanceBuffer = new ComputeBuffer(m_CurrentInstanceCapacity, 112, ComputeBufferType.Structured);
-            // Visible Buffer 每个LOD都需要存储空间, 最坏情况全在一个LOD，因此总大小要 x 3
-            GlobalVisibleBuffer = new ComputeBuffer(m_CurrentInstanceCapacity * 3, sizeof(uint), ComputeBufferType.Structured);
-            m_InstanceDataCache = new GPUInstanceData[m_CurrentInstanceCapacity];
+            GlobalInstanceDataTex = new RenderTexture(desc);
+            GlobalInstanceDataTex.filterMode = FilterMode.Point;
+            GlobalInstanceDataTex.Create();
         }
     
-        // 3. 检查并扩容 Batch 相关 Buffer (每个 Batch 有 3 个子 LOD Batches)
+        // 3. 可见性索引纹理也采用 RenderTextureDescriptor 保证一致性
+        int visiblePixels = requiredInstanceCount * 3;
+        int visibleHeight = Mathf.CeilToInt((float)visiblePixels / CurrentTexWidth);
+        if (GlobalVisibleIndexTex == null || GlobalVisibleIndexTex.width != CurrentTexWidth || GlobalVisibleIndexTex.height != visibleHeight) {
+            if (GlobalVisibleIndexTex != null) {
+                GlobalVisibleIndexTex.Release();
+            }
+            
+            RenderTextureDescriptor desc = new RenderTextureDescriptor(
+                CurrentTexWidth, 
+                visibleHeight, 
+                UnityEngine.Experimental.Rendering.GraphicsFormat.R32_UInt, 
+                0
+            );
+            desc.enableRandomWrite = true; // 显式且安全地开启 UAV 支持
+            
+            GlobalVisibleIndexTex = new RenderTexture(desc);
+            GlobalVisibleIndexTex.filterMode = FilterMode.Point;
+            GlobalVisibleIndexTex.Create();
+        }
+
         if (batchCount > m_CurrentBatchCapacity) {
             GlobalArgsBuffer?.Release();
             BatchOutputOffsetsBuffer?.Release();
-    
+
             m_CurrentBatchCapacity = Mathf.CeilToInt(batchCount * 1.5f);
             int totalSubBatches = m_CurrentBatchCapacity * 3;
-    
+
             GlobalArgsBuffer = new ComputeBuffer(totalSubBatches * 5, sizeof(uint), ComputeBufferType.IndirectArguments);
             BatchOutputOffsetsBuffer = new ComputeBuffer(totalSubBatches, sizeof(uint), ComputeBufferType.Structured);
             
             m_ArgsCache = new uint[totalSubBatches * 5];
             m_OffsetCache = new uint[totalSubBatches];
         }
-    
-        // 4. 填充数据
+
+        // 4. 确保正确扩容 CPU 暂存缓存
+        if (m_InstanceDataCache == null || m_InstanceDataCache.Length < requiredInstanceCount) {
+            m_InstanceDataCache = new GPUInstanceData[requiredInstanceCount];
+        }
+
         int currentIndex = 0;
         int currentInstanceBase = 0;
+
         for (int i = 0; i < batchCount; i++) {
             var batch = m_InstanceBatches[i];
             int batchLen = batch.matrices.Length;
-    
-            // 拆分为 3 个子 Batch 处理 LOD 0, 1, 2
+
             for (int lod = 0; lod < 3; lod++) {
                 int subBatchIdx = i * 3 + lod;
-                // 分配此子LOD能用的输出空间上限
                 m_OffsetCache[subBatchIdx] = (uint)(currentInstanceBase + batchLen * lod); 
-    
-                // 填充 Indirect Args
+
                 int argBase = subBatchIdx * 5;
                 if (batch.meshes[lod] != null) {
                     m_ArgsCache[argBase + 0] = batch.meshes[lod].GetIndexCount(0);
-                    m_ArgsCache[argBase + 1] = 0; // 实例数量 (由CS Atomic 追加)
+                    m_ArgsCache[argBase + 1] = 0; 
                     m_ArgsCache[argBase + 2] = batch.meshes[lod].GetIndexStart(0);
                     m_ArgsCache[argBase + 3] = batch.meshes[lod].GetBaseVertex(0);
                     m_ArgsCache[argBase + 4] = 0;
@@ -146,25 +188,43 @@ public class HizCullingMgr {
                     m_ArgsCache[argBase + 4] = 0;
                 }
             }
-    
-            // 填充实例数据
+
             Vector3 extents = batch.extents;
             uint bIndex = (uint)i;
-    
+
+            // 核心赋值循环
             for (int j = 0; j < batchLen; j++) {
-                m_InstanceDataCache[currentIndex].matrix = batch.matrices[j];
+                // 【已修正】：使用 .matrix，去掉下划线
+                m_InstanceDataCache[currentIndex].matrix = batch.matrices[j]; 
                 m_InstanceDataCache[currentIndex].blockData = batch.blocks != null && j < batch.blocks.Length ? batch.blocks[j] : Vector4.zero;
                 m_InstanceDataCache[currentIndex].extents = extents;
                 m_InstanceDataCache[currentIndex].batchIndex = bIndex;
                 m_InstanceDataCache[currentIndex].lodDistances = batch.lodDistances;
                 currentIndex++;
             }
-            
             currentInstanceBase += batchLen * 3;
         }
-    
-        // 5. 上传数据
-        GlobalInstanceBuffer.SetData(m_InstanceDataCache, 0, 0, requiredInstanceCount);
+
+        // 直传临时 StructuredBuffer 
+        if (m_InstanceUploadBuffer == null || m_InstanceUploadBuffer.count < requiredInstanceCount) {
+            m_InstanceUploadBuffer?.Release();
+            int allocCapacity = Mathf.CeilToInt(requiredInstanceCount * 1.2f);
+            m_InstanceUploadBuffer = new ComputeBuffer(allocCapacity, 112, ComputeBufferType.Structured);
+        }
+        m_InstanceUploadBuffer.SetData(m_InstanceDataCache, 0, 0, requiredInstanceCount);
+
+        // 调度 CSMain_Bake 烘焙
+        var cullCS = Setting.HizCullCS;
+        int kernelBake = cullCS.FindKernel("CSMain_Bake");
+        
+        cullCS.SetBuffer(kernelBake, "_InputInstanceBuffer", m_InstanceUploadBuffer);
+        cullCS.SetTexture(kernelBake, "_GlobalInstanceDataTexWrite", GlobalInstanceDataTex);
+        cullCS.SetInt("_BakeInstanceCount", requiredInstanceCount);
+        cullCS.SetInt("_TexWidth", CurrentTexWidth);
+
+        int groups = Mathf.Max(1, Mathf.CeilToInt(requiredInstanceCount / 64f));
+        cullCS.Dispatch(kernelBake, groups, 1, 1);
+
         GlobalArgsBuffer.SetData(m_ArgsCache, 0, 0, batchCount * 15);
         BatchOutputOffsetsBuffer.SetData(m_OffsetCache, 0, 0, batchCount * 3);
     }
@@ -191,21 +251,14 @@ public class HizCullingMgr {
     //                     int globalOffset = tile.GetGPUGlobalOffset(type);
     //                     if (globalOffset == -1) continue;
     //
-    //                     // 计算节点在平坦 Tile 数据集中的物理偏移
     //                     int tileTypeStartIdx = tile.GetTypeStartIdxInTile(type);
     //                     int localOffset = drawNode.TRS_StartIndex - tileTypeStartIdx;
     //
-    //                     // 转换并追加绝对全局下标
     //                     int startGlobalIdx = globalOffset + localOffset;
     //                     int count = drawNode.TRS_Count;
     //                     for (int idx = 0; idx < count; idx++) {
     //                         uint globalIdx = (uint)(startGlobalIdx + idx);
-    //         
-    //                         // 【核心修改】：位打包
-    //                         // 将 LOD 等级 (j) 移到最高的 2 位，ID 占据低 30 位
-    //                         // 0x3FFFFFFF 相当于低 30 位全 1 的掩码，防止 ID 溢出污染 LOD 数据
     //                         uint packedData = ((uint)j << 30) | (globalIdx & 0x3FFFFFFF);
-    //         
     //                         m_CPUFilteredIndices.Add(packedData);
     //                     }
     //                 }
@@ -213,11 +266,9 @@ public class HizCullingMgr {
     //         }
     //     }
     //
-    //     // 创建并上传至 GPU Index Buffer
     //     if (m_CPUFilteredIndices.Count > 0) {
     //         if (InputIndicesBuffer == null || InputIndicesBuffer.count < m_CPUFilteredIndices.Count) {
     //             InputIndicesBuffer?.Release();
-    //             // 使用 1.5 倍冗余扩容降低显存申请频次
     //             int capacity = Mathf.CeilToInt(m_CPUFilteredIndices.Count * 1.5f);
     //             InputIndicesBuffer = new ComputeBuffer(capacity, sizeof(uint), ComputeBufferType.Structured);
     //         }
@@ -302,9 +353,14 @@ public class HizCullingMgr {
         foreach (var b in m_InstanceBatches) b.Dispose();
         m_HizCullableList.Clear();
         m_InstanceBatches.Clear();
-        // ... 原有的 dispose 逻辑 ...
-        GlobalInstanceBuffer?.Release();
-        GlobalVisibleBuffer?.Release();
+        if (GlobalInstanceDataTex != null) {
+            Object.DestroyImmediate(GlobalInstanceDataTex);
+            GlobalInstanceDataTex = null;
+        }
+        if (GlobalVisibleIndexTex != null) {
+            GlobalVisibleIndexTex.Release();
+            GlobalVisibleIndexTex = null;
+        }
         GlobalArgsBuffer?.Release();
         BatchOutputOffsetsBuffer?.Release();
         // 回收下标组织缓冲区

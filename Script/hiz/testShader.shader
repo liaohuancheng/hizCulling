@@ -43,10 +43,10 @@ Shader "Custom/HizInstanceRendering"
                 float4 lodDistances;
             };
 
-            // --- 全局资源绑定 ---
-            StructuredBuffer<GPUInstanceData> _GlobalInstanceDataBuffer;
-            StructuredBuffer<uint> _GlobalVisibleIndexBuffer;
-            
+            // --- 纹理形式绑定（实现最大平台兼容性） ---
+            Texture2D<float4> _GlobalInstanceDataTex;
+            Texture2D<uint> _GlobalVisibleIndexTex;
+            int _TexWidth;
             // C# 中通过 material.SetInt 传进来的偏移量
             int _BatchVisibleOffset; 
 
@@ -59,28 +59,35 @@ Shader "Custom/HizInstanceRendering"
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
 
-                // 1. 获取在全局可见索引表中的位置
-                // instanceID 是当前 DrawCall 的局部序号
-                // _BatchVisibleOffset 是该 Batch 在全表中的起始偏移
+                // 1. 计算在可见性像素贴图中的 2D 坐标
                 uint visibleBufferIndex = instanceID + (uint)_BatchVisibleOffset;
+                int2 uvVisible = int2(visibleBufferIndex % (uint)_TexWidth, visibleBufferIndex / (uint)_TexWidth);
                 
-                // 2. 拿到原始数据的真正索引
-                uint instanceIndex = _GlobalVisibleIndexBuffer[visibleBufferIndex];
+                // 2. 采样读取真正的原始 Instance 索引 (转换为 uint)
+                uint instanceIndex = (uint)_GlobalVisibleIndexTex.Load(int3(uvVisible, 0)).r;
 
-                // 3. 提取矩阵和属性
-                GPUInstanceData data = _GlobalInstanceDataBuffer[instanceIndex];
-                float4x4 objectToWorld = data._matrix;
+                // 3. 按照 7 像素/Instance 的解码规则，依次采样矩阵和 Block 数据
+                uint baseIdx = instanceIndex * 7;
+                int2 uv0 = int2((baseIdx + 0) % (uint)_TexWidth, (baseIdx + 0) / (uint)_TexWidth);
+                int2 uv1 = int2((baseIdx + 1) % (uint)_TexWidth, (baseIdx + 1) / (uint)_TexWidth);
+                int2 uv2 = int2((baseIdx + 2) % (uint)_TexWidth, (baseIdx + 2) / (uint)_TexWidth);
+                int2 uv3 = int2((baseIdx + 3) % (uint)_TexWidth, (baseIdx + 3) / (uint)_TexWidth);
+                int2 uv4 = int2((baseIdx + 4) % (uint)_TexWidth, (baseIdx + 4) / (uint)_TexWidth);
+
+                float4 r0 = _GlobalInstanceDataTex.Load(int3(uv0, 0));
+                float4 r1 = _GlobalInstanceDataTex.Load(int3(uv1, 0));
+                float4 r2 = _GlobalInstanceDataTex.Load(int3(uv2, 0));
+                float4 r3 = _GlobalInstanceDataTex.Load(int3(uv3, 0));
+                
+                float4x4 objectToWorld = float4x4(r0, r1, r2, r3);
+                float4 blockData = _GlobalInstanceDataTex.Load(int3(uv4, 0));
 
                 // 4. 计算坐标
-                // 注意：这里手动进行矩阵变换，不再使用 TransformObjectToWorld
                 float4 worldPos = mul(objectToWorld, float4(input.positionOS.xyz, 1.0));
                 output.positionCS = mul(GetWorldToHClipMatrix(), worldPos);
 
                 output.uv = input.uv;
-                
-                // 5. 传递 blockData (用于个性化显示)
-                // 比如 blockData.x 存储的是随机颜色偏移
-                output.colorOffset = data.blockData;
+                output.colorOffset = blockData;
 
                 return output;
             }

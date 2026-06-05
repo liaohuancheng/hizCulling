@@ -11,9 +11,10 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
     private HizCullingStandardPass m_CullingStandardPass;
     private HizCullingInstancePass m_CullingInstancePass;
     private HizDrawInstancePass m_DrawInstancePass;
-    private static readonly int GlobalInstanceDataBuffer = Shader.PropertyToID("_GlobalInstanceDataBuffer");
-    private static readonly int GlobalVisibleIndexBuffer = Shader.PropertyToID("_GlobalVisibleIndexBuffer");
+    private static readonly int GlobalInstanceDataTexId = Shader.PropertyToID("_GlobalInstanceDataTex");
+    private static readonly int GlobalVisibleIndexTexId = Shader.PropertyToID("_GlobalVisibleIndexTex");
     private static readonly int BatchVisibleOffset = Shader.PropertyToID("_BatchVisibleOffset");
+    private static readonly int TexWidthId = Shader.PropertyToID("_TexWidth");
 
     public override void Create() {
         m_LinearDepthCopyPass = new LinearDepthCopyPass();
@@ -89,6 +90,10 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
         cmd.SetComputeMatrixParam(cs, "_HizCullVP", vp);
         cmd.SetComputeVectorParam(cs, "_WorldSpaceCameraPos", data.cameraData.camera.transform.position);
         // 注意顺序：x 是 MaxMip(0), y 是 MinMip(9)
+        cmd.SetComputeVectorParam(cs, "_ZBufferParams", Shader.GetGlobalVector("_ZBufferParams"));
+        cmd.SetComputeVectorParam(cs, "_ProjectionParams", Shader.GetGlobalVector("_ProjectionParams"));
+        cmd.SetComputeIntParam(cs, "_TexWidth", HizCullingMgr.Instance.CurrentTexWidth);
+        
         cmd.SetComputeVectorParam(cs, "_HizMinMaxMipAndScreenSize", new Vector4(cameraContext.MaxMipLevel, cameraContext.MinMipLevel, cameraContext.ScreenResolution.x, cameraContext.ScreenResolution.y));
         cmd.SetComputeVectorArrayParam(cs, "_HizAtlasMipScaleOffset", cameraContext.HizMipScaleOffset);
         cmd.SetComputeVectorArrayParam(cs, "_FrustumPlanes", cameraContext.FrustumPlanes);
@@ -232,7 +237,7 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
 
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) {
             var mgr = HizCullingMgr.Instance;
-            if (m_Ctx == null || mgr.TotalInstanceCount <= 0 || mgr.GlobalInstanceBuffer == null) return;
+            if (m_Ctx == null || mgr.TotalInstanceCount <= 0 || mgr.GlobalInstanceDataTex == null) return;
 
             var cullCS = mgr.Setting.HizCullCS;
             var cmd = CommandBufferPool.Get("HizCulling_GlobalInstance");
@@ -259,9 +264,9 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
                     int kernelCull = cullCS.FindKernel("CSMain_GlobalInstance_Filtered");
                     
                     cmd.SetComputeTextureParam(cullCS, kernelCull, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
-                    cmd.SetComputeBufferParam(cullCS, kernelCull, "_GlobalInstanceDataBuffer", mgr.GlobalInstanceBuffer);
+                    cmd.SetComputeTextureParam(cullCS, kernelCull, GlobalInstanceDataTexId, mgr.GlobalInstanceDataTex);
                     cmd.SetComputeBufferParam(cullCS, kernelCull, "_BatchOutputOffsets", mgr.BatchOutputOffsetsBuffer);
-                    cmd.SetComputeBufferParam(cullCS, kernelCull, "_GlobalVisibleIndexBuffer", mgr.GlobalVisibleBuffer);
+                    cmd.SetComputeTextureParam(cullCS, kernelCull, GlobalVisibleIndexTexId, mgr.GlobalVisibleIndexTex);
                     cmd.SetComputeBufferParam(cullCS, kernelCull, "_GlobalArgsBuffer", mgr.GlobalArgsBuffer);
                     
                     cmd.SetComputeBufferParam(cullCS, kernelCull, "_InputIndicesBuffer", inputIndicesBuffer);
@@ -274,9 +279,9 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
                 int kernelCull = cullCS.FindKernel("CSMain_GlobalInstance");
                 
                 cmd.SetComputeTextureParam(cullCS, kernelCull, "_HizMipAtlas", m_Parent.HizMipAtlasHandle);
-                cmd.SetComputeBufferParam(cullCS, kernelCull, "_GlobalInstanceDataBuffer", mgr.GlobalInstanceBuffer);
+                cmd.SetComputeTextureParam(cullCS, kernelCull, GlobalInstanceDataTexId, mgr.GlobalInstanceDataTex);
                 cmd.SetComputeBufferParam(cullCS, kernelCull, "_BatchOutputOffsets", mgr.BatchOutputOffsetsBuffer);
-                cmd.SetComputeBufferParam(cullCS, kernelCull, "_GlobalVisibleIndexBuffer", mgr.GlobalVisibleBuffer);
+                cmd.SetComputeTextureParam(cullCS, kernelCull, GlobalVisibleIndexTexId, mgr.GlobalVisibleIndexTex);
                 cmd.SetComputeBufferParam(cullCS, kernelCull, "_GlobalArgsBuffer", mgr.GlobalArgsBuffer);
                 cmd.SetComputeIntParam(cullCS, "_TotalInstanceCount", mgr.TotalInstanceCount);
                 
@@ -311,9 +316,9 @@ public class HizCullingRenderFeature : ScriptableRendererFeature {
                         uint offset = currentVisibleOffset + (uint)(batchLen * lod);
                         m_MPB.Clear();
                         m_MPB.SetInt(BatchVisibleOffset, (int)offset);
-                        m_MPB.SetBuffer(GlobalVisibleIndexBuffer, mgr.GlobalVisibleBuffer);
-                        m_MPB.SetBuffer(GlobalInstanceDataBuffer, mgr.GlobalInstanceBuffer);
-                        
+                        m_MPB.SetTexture(GlobalVisibleIndexTexId, mgr.GlobalVisibleIndexTex);
+                        m_MPB.SetTexture(GlobalInstanceDataTexId, mgr.GlobalInstanceDataTex);
+                        m_MPB.SetInt(TexWidthId, HizCullingMgr.Instance.CurrentTexWidth);
                         
                         // Args Buffer 每一个结构占 5个 uint(20 bytes)
                         cmd.DrawMeshInstancedIndirect(batch.meshes[lod], 0, batch.materials[lod], 0, mgr.GlobalArgsBuffer, (i * 3 + lod) * 20, m_MPB);
